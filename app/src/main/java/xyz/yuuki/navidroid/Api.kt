@@ -69,7 +69,7 @@ data class Song(
 
 data class Album(
     val id: String, val name: String, val artist: String, val artistId: String?,
-    val coverArt: String?, val year: Int, val songCount: Int, val playCount: Int,
+    val coverArt: String?, val year: Int, val songCount: Int, val playCount: Int, val starred: Boolean = false,
 ) {
     companion object {
         fun from(o: JSONObject) = Album(
@@ -81,14 +81,15 @@ data class Album(
             year = o.optInt("year"),
             songCount = o.optInt("songCount"),
             playCount = o.optInt("playCount"),
+            starred = o.has("starred"),
         )
     }
 }
 
-data class Artist(val id: String, val name: String, val coverArt: String?, val albumCount: Int) {
+data class Artist(val id: String, val name: String, val coverArt: String?, val albumCount: Int, val starred: Boolean = false) {
     companion object {
         fun from(o: JSONObject) = Artist(
-            o.getString("id"), o.s("name") ?: "", o.s("coverArt") ?: "ar-${o.getString("id")}", o.optInt("albumCount"),
+            o.getString("id"), o.s("name") ?: "", o.s("coverArt") ?: "ar-${o.getString("id")}", o.optInt("albumCount"), o.has("starred"),
         )
     }
 }
@@ -119,6 +120,7 @@ data class Collection(
     val mix: Mix? = null,
     val year: Int = 0,
     val artistId: String? = null,
+    val starred: Boolean = false,
 ) {
     val duration get() = songs.sumOf { it.duration }
 
@@ -171,6 +173,11 @@ class Prefs(ctx: Context) {
     var downloadBitrate by int("downloadBitrate", 0)
     var wifiOnlyDownloads by bool("wifiOnly", true)
     var lastSync by long("lastSync")
+
+    /** Playlist ids saved to the library; Subsonic can't star playlists, so they live here. */
+    var savedPlaylists: Set<String>
+        get() = p.getStringSet("savedPlaylists", null) ?: emptySet()
+        set(v) = p.edit().putStringSet("savedPlaylists", v).apply()
 
     /** Pinned collections, "Kind:id", kept downloaded and re-synced. */
     var pins: List<String>
@@ -355,7 +362,7 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
                 }
                 Kind.Album -> call("getAlbum", "id" to id).getJSONObject("album").let {
                     val a = Album.from(it)
-                    Collection(Kind.Album, id, a.name, null, a.artist, a.coverArt, it.list("song").map(Song::from), year = a.year, artistId = a.artistId)
+                    Collection(Kind.Album, id, a.name, null, a.artist, a.coverArt, it.list("song").map(Song::from), year = a.year, artistId = a.artistId, starred = a.starred)
                 }
                 Kind.Liked -> Collection(Kind.Liked, "liked", "Liked Songs", null, prefs.username, null,
                     starred().list("song").map(Song::from).reversed())
@@ -416,8 +423,9 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
         Lyrics(synced, pick?.list("line").orEmpty().map { LyricLine(if (synced) it.optLong("start") + offset else -1, it.optString("value")) })
     }.takeIf { it.lines.isNotEmpty() }
 
-    suspend fun setStarred(id: String, on: Boolean) {
-        call(if (on) "star" else "unstar", "id" to id)
+    /** [param] is "id" for songs, "albumId" or "artistId" for those. */
+    suspend fun setStarred(id: String, on: Boolean, param: String = "id") {
+        call(if (on) "star" else "unstar", param to id)
     }
 
     suspend fun addToPlaylist(playlistId: String, songIds: List<String>) {

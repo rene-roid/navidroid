@@ -288,6 +288,7 @@ fun LibraryScreen() {
     val pins by offline.pins.collectAsStateWithLifecycle()
     val playlists = rememberLoad("playlists") { api.playlists() }
     val artists = rememberLoad("artists") { api.artists() }
+    val starred = rememberLoad("starred") { api.starred() }
     val albums = remember { mutableStateListOf<xyz.yuuki.navidroid.Album>() }
     var albumsDone by remember { mutableStateOf(false) }
     val list = rememberLazyListState()
@@ -331,26 +332,36 @@ fun LibraryScreen() {
         }
         val pinnedIds = pins.map { "${it.kind}:${it.id}" }.toSet()
         @Composable
-        fun mark(kind: Kind, id: String) {
+        fun mark(kind: Kind, id: String, saved: Boolean = false) {
+            if (saved) FavoriteMark()
             if ("$kind:$id" in pinnedIds) DownloadedMark()
         }
+        // Saved items first; the server list is refreshed on every visit, overrides cover the gap.
+        val savedAlbums = starred.data?.list("album").orEmpty().map(xyz.yuuki.navidroid.Album::from).filter { Likes.isLiked(it.id, true) }
+        val savedArtists = starred.data?.list("artist").orEmpty().map(xyz.yuuki.navidroid.Artist::from).filter { Likes.isLiked(it.id, true) }
         when (tab) {
             "Playlists" -> {
                 item("liked") {
                     ListRow("Liked Songs", "Playlist", { LikedCover(Modifier.size(56.dp)) }, { mark(Kind.Liked, "liked") }) { nav.go(Route.Open(Kind.Liked, "liked")) }
                 }
-                items(playlists.data.orEmpty().sortedBy { it.mix != null }, key = { it.id }) { p ->
+                items(playlists.data.orEmpty().sortedWith(compareBy({ it.id !in Likes.playlists }, { it.mix != null })), key = { it.id }) { p ->
                     val t = p.tile()
-                    ListRow(t.title, if (p.mix != null) "Mix • ${p.mix.by}" else "Playlist • ${p.owner}", { TileCover(Kind.Playlist, p.id, p.coverArt, p.mix, Modifier.size(56.dp), 120) }, { mark(Kind.Playlist, p.id) }) {
+                    ListRow(t.title, if (p.mix != null) "Mix • ${p.mix.by}" else "Playlist • ${p.owner}", { TileCover(Kind.Playlist, p.id, p.coverArt, p.mix, Modifier.size(56.dp), 120) }, { mark(Kind.Playlist, p.id, p.id in Likes.playlists) }) {
                         nav.open(t)
                     }
                 }
             }
-            "Albums" -> items(albums, key = { it.id }) { a ->
-                ListRow(a.name, "Album • ${a.artist}", { Cover(a.coverArt, 120, Modifier.size(56.dp)) }, { mark(Kind.Album, a.id) }) { nav.go(Route.Open(Kind.Album, a.id)) }
+            "Albums" -> {
+                val ids = savedAlbums.map { it.id }.toSet()
+                items(savedAlbums + albums.filter { it.id !in ids }, key = { it.id }) { a ->
+                    ListRow(a.name, "Album • ${a.artist}", { Cover(a.coverArt, 120, Modifier.size(56.dp)) }, { mark(Kind.Album, a.id, a.id in ids) }) { nav.go(Route.Open(Kind.Album, a.id)) }
+                }
             }
-            "Artists" -> items(artists.data.orEmpty(), key = { it.id }) { a ->
-                ListRow(a.name, "Artist", { Cover(a.coverArt, 120, Modifier.size(56.dp), CircleShape) }) { nav.go(Route.Open(Kind.Artist, a.id)) }
+            "Artists" -> {
+                val ids = savedArtists.map { it.id }.toSet()
+                items(savedArtists + artists.data.orEmpty().filter { it.id !in ids }, key = { it.id }) { a ->
+                    ListRow(a.name, "Artist", { Cover(a.coverArt, 120, Modifier.size(56.dp), CircleShape) }, { mark(Kind.Artist, a.id, a.id in ids) }) { nav.go(Route.Open(Kind.Artist, a.id)) }
+                }
             }
             else -> {
                 val tiles = pinnedTiles(pins)
@@ -413,6 +424,8 @@ fun CollectionScreen(kind: Kind, id: String) {
             item("actions") {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (c != null) PinButton(c)
+                    if (c != null && kind == Kind.Album) HeartButton(Likes.isLiked(c.id, c.starred)) { Likes.toggle(c.id, c.starred, "albumId") }
+                    if (c != null && kind == Kind.Playlist) HeartButton(c.id in Likes.playlists) { Likes.togglePlaylist(c.id) }
                     Spacer(Modifier.weight(1f))
                     IconButton({ c?.let { player?.play(it.songs, shuffled = true, from = it.title) } }) {
                         Icon(Icons.Rounded.Shuffle, "Shuffle play", Modifier.size(28.dp), tint = Sub)
@@ -501,6 +514,7 @@ fun ArtistScreen(id: String) {
             if (a != null) {
                 item("actions") {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        HeartButton(Likes.isLiked(a.artist.id, a.artist.starred)) { Likes.toggle(a.artist.id, a.artist.starred, "artistId") }
                         Text("${a.albums.size} releases", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
                         IconButton({
                             scope.launch { runCatching { player?.play(api.artistSongs(a), shuffled = true, from = a.artist.name) } }

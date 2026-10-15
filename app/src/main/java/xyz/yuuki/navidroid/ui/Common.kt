@@ -163,18 +163,35 @@ fun <T> cachedUi(key: String) = uiCache[key] as T?
 
 // ---- likes ----------------------------------------------------------------------------------
 
+/** Starred songs, albums and artists (on the server) and saved playlists (on the phone). */
 object Likes {
     private val overrides = mutableStateMapOf<String, Boolean>()
+    var playlists by mutableStateOf(App.it.prefs.savedPlaylists)
+        private set
 
-    fun isLiked(s: Song) = overrides[s.id] ?: s.starred
+    fun isLiked(s: Song) = isLiked(s.id, s.starred)
+    fun isLiked(id: String, starred: Boolean) = overrides[id] ?: starred
 
-    fun toggle(s: Song) {
-        val on = !isLiked(s)
-        overrides[s.id] = on
+    fun toggle(s: Song) = toggle(s.id, s.starred)
+
+    /** [param] as in [xyz.yuuki.navidroid.Api.setStarred]. */
+    fun toggle(id: String, starred: Boolean, param: String = "id") {
+        val on = !isLiked(id, starred)
+        overrides[id] = on
         App.it.scope.launch {
-            runCatching { App.it.api.setStarred(s.id, on) }.onFailure { withContext(Dispatchers.Main) { overrides[s.id] = !on } }
+            runCatching { App.it.api.setStarred(id, on, param) }.onFailure { withContext(Dispatchers.Main) { overrides[id] = !on } }
         }
     }
+
+    fun togglePlaylist(id: String) {
+        playlists = if (id in playlists) playlists - id else playlists + id
+        App.it.prefs.savedPlaylists = playlists
+    }
+}
+
+@Composable
+fun HeartButton(liked: Boolean, size: Dp = 28.dp, onClick: () -> Unit) = IconButton(onClick) {
+    Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (liked) "Remove from Your Library" else "Save to Your Library", Modifier.size(size), tint = if (liked) Green else Sub)
 }
 
 // ---- images ---------------------------------------------------------------------------------
@@ -328,6 +345,9 @@ fun PlayButton(playing: Boolean, size: Dp = 56.dp, onClick: () -> Unit) = Box(
 ) {
     Icon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (playing) "Pause" else "Play", Modifier.size(size * .55f), tint = Color.Black)
 }
+
+@Composable
+fun FavoriteMark() = Icon(Icons.Rounded.Favorite, "Saved", Modifier.padding(end = 4.dp).size(14.dp), tint = Green)
 
 @Composable
 fun DownloadedMark() = Icon(Icons.Rounded.ArrowCircleDown, "Downloaded", Modifier.padding(end = 4.dp).size(14.dp), tint = Green)
