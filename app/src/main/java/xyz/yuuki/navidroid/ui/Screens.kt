@@ -78,6 +78,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -283,13 +285,24 @@ fun SearchScreen() {
 @Composable
 private fun GenreCard(g: xyz.yuuki.navidroid.Genre) {
     val nav = LocalNav.current
+    val art by androidx.compose.runtime.produceState<String?>(null, g.name) { value = runCatching { api.genreCover(g.name) }.getOrNull() }
+    // Tinted from the cover so card and art match; the palette colour shows until it loads.
+    // The cover colour is darkened for headers, so lift it back to one even, vivid brightness.
+    val cover = rememberCoverColor(art, Color(xyz.yuuki.navidroid.paletteColor(g.name)))
+    val bg = remember(cover) {
+        val hsv = FloatArray(3).also { android.graphics.Color.colorToHSV(cover.toArgb(), it) }
+        Color(android.graphics.Color.HSVToColor(floatArrayOf(hsv[0], hsv[1].coerceAtLeast(0.45f), 0.6f)))
+    }
     Box(
-        Modifier.height(96.dp).clip(RoundedCornerShape(6.dp)).background(Color(xyz.yuuki.navidroid.paletteColor(g.name)))
+        Modifier.height(100.dp).clip(RoundedCornerShape(8.dp))
+            .background(Brush.linearGradient(listOf(lerp(bg, Color.White, 0.18f), bg)))
             .clickable { nav.go(Route.Open(Kind.Genre, g.name)) }.padding(12.dp),
     ) {
-        val art by androidx.compose.runtime.produceState<String?>(null, g.name) { value = runCatching { api.genreCover(g.name) }.getOrNull() }
-        if (art != null) Cover(art, 200, Modifier.align(Alignment.BottomEnd).offset(x = 22.dp, y = 10.dp).size(68.dp).rotate(25f))
-        Text(g.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.W800, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(end = 40.dp))
+        if (art != null) Cover(
+            art, 200,
+            Modifier.align(Alignment.BottomEnd).offset(x = 20.dp, y = 12.dp).size(78.dp).rotate(25f).shadow(10.dp, RoundedCornerShape(4.dp)),
+        )
+        Text(g.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(end = 44.dp))
     }
 }
 
