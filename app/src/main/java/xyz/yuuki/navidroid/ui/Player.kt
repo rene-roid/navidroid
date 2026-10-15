@@ -170,7 +170,7 @@ fun MiniPlayer(p: PlayerState, onOpen: () -> Unit) {
     val pos = rememberPosition(p, 500)
     Box(
         Modifier.padding(horizontal = 8.dp).fillMaxWidth().height(58.dp).clip(RoundedCornerShape(6.dp))
-            .background(color).clickable(onClick = onOpen),
+            .background(color).swipeToSkip(p, song).clickable(onClick = onOpen),
     ) {
         Row(Modifier.fillMaxSize().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Cover(song.coverArt, 120, Modifier.size(42.dp))
@@ -266,38 +266,40 @@ fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
 
 /** Album art you can swipe sideways to skip, like the big streaming apps. */
 @Composable
-private fun SwipeArt(p: PlayerState, song: Song) {
+private fun SwipeArt(p: PlayerState, song: Song) = Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp)) {
+    Cover(
+        song.coverArt, 600,
+        Modifier.fillMaxWidth().aspectRatio(1f).swipeToSkip(p, song).shadow(24.dp, RoundedCornerShape(8.dp)),
+        RoundedCornerShape(8.dp),
+    )
+}
+
+/** Drag sideways to go to the next or previous song; the content follows the finger and fades. */
+@Composable
+private fun Modifier.swipeToSkip(p: PlayerState, song: Song): Modifier {
     val dx = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(song.id) { dx.snapTo(0f) }
-    Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp)) {
-        Cover(
-            song.coverArt, 600,
-            Modifier.fillMaxWidth().aspectRatio(1f)
-                .graphicsLayer {
-                    translationX = dx.value
-                    alpha = 1f - (abs(dx.value) / size.width).coerceIn(0f, .6f)
+    return graphicsLayer {
+        translationX = dx.value
+        alpha = 1f - (abs(dx.value) / size.width).coerceIn(0f, .6f)
+    }.pointerInput(Unit) {
+        detectHorizontalDragGestures(
+            onDragEnd = {
+                val w = size.width.toFloat()
+                scope.launch {
+                    when {
+                        dx.value < -w / 4 && p.c.hasNextMediaItem() -> { dx.animateTo(-w); p.c.seekToNextMediaItem() }
+                        dx.value > w / 4 && p.c.hasPreviousMediaItem() -> { dx.animateTo(w); p.c.seekToPreviousMediaItem() }
+                        else -> dx.animateTo(0f)
+                    }
                 }
-                .shadow(24.dp, RoundedCornerShape(8.dp))
-                .pointerInput(Unit) {
-                    detectHorizontalDragGestures(
-                        onDragEnd = {
-                            val w = size.width.toFloat()
-                            scope.launch {
-                                when {
-                                    dx.value < -w / 4 && p.c.hasNextMediaItem() -> { dx.animateTo(-w); p.c.seekToNextMediaItem() }
-                                    dx.value > w / 4 -> { dx.animateTo(w); p.c.seekToPrevious() }
-                                    else -> dx.animateTo(0f)
-                                }
-                            }
-                        },
-                        onHorizontalDrag = { change, amount ->
-                            change.consume()
-                            scope.launch { dx.snapTo(dx.value + amount) }
-                        },
-                    )
-                },
-            RoundedCornerShape(8.dp),
+            },
+            onDragCancel = { scope.launch { dx.animateTo(0f) } },
+            onHorizontalDrag = { change, amount ->
+                change.consume()
+                scope.launch { dx.snapTo(dx.value + amount) }
+            },
         )
     }
 }
