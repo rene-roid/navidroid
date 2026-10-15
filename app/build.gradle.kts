@@ -10,7 +10,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "xyz.yuuki.navidroid"
+        applicationId = "com.netease.cloudmusic"
         minSdk = 28
         targetSdk = 37
         versionCode = 1
