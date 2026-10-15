@@ -1,6 +1,34 @@
 package xyz.yuuki.navidroid.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.material.icons.rounded.Dns
+import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentType
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import xyz.yuuki.navidroid.R
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,7 +41,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -80,8 +107,13 @@ import xyz.yuuki.navidroid.normalizeEndpoint
 import xyz.yuuki.navidroid.song
 
 private val fieldColors @Composable get() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor = Color.White, unfocusedBorderColor = Faint, cursorColor = Green, focusedLabelColor = Color.White,
+    focusedContainerColor = Surface, unfocusedContainerColor = Surface, disabledContainerColor = Surface,
+    focusedBorderColor = Green, unfocusedBorderColor = Color.Transparent, cursorColor = Green,
+    focusedLabelColor = Green, unfocusedLabelColor = Sub, focusedLeadingIconColor = Green, unfocusedLeadingIconColor = Sub,
+    focusedTrailingIconColor = Sub, unfocusedTrailingIconColor = Sub, focusedSupportingTextColor = Faint, unfocusedSupportingTextColor = Faint,
 )
+
+private val fieldShape = RoundedCornerShape(14.dp)
 
 @Composable
 fun LoginScreen(onDone: () -> Unit) {
@@ -89,73 +121,111 @@ fun LoginScreen(onDone: () -> Unit) {
     var servers by remember { mutableStateOf("") }
     var user by remember { mutableStateOf("") }
     var pass by remember { mutableStateOf("") }
+    var showPass by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    val canSubmit = !busy && servers.isNotBlank() && user.isNotBlank() && pass.isNotEmpty()
+    val spin by rememberInfiniteTransition().animateFloat(0f, 360f, infiniteRepeatable(tween(6000, easing = LinearEasing)))
 
-    Column(
-        Modifier.fillMaxSize().background(Bg).statusBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Spacer(Modifier.height(40.dp))
-        Box(Modifier.size(64.dp).clip(CircleShape).background(Green), contentAlignment = Alignment.Center) {
-            Box(Modifier.size(20.dp).clip(CircleShape).background(Bg))
-        }
-        Text("Log in to Navidrome", style = MaterialTheme.typography.headlineMedium)
-        Text(
-            "Add every address your server answers on, one per line. The app uses whichever responds fastest and switches if one goes down.",
-            style = MaterialTheme.typography.bodySmall,
-        )
-        OutlinedTextField(
-            servers, { servers = it }, Modifier.fillMaxWidth(), label = { Text("Server addresses") },
-            placeholder = { Text("music.example.com\n192.168.1.10:4533") }, minLines = 2, colors = fieldColors,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
-        )
-        OutlinedTextField(
-            user, { user = it }, Modifier.fillMaxWidth(), label = { Text("Username") }, singleLine = true, colors = fieldColors,
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
-        )
-        OutlinedTextField(
-            pass, { pass = it }, Modifier.fillMaxWidth(), label = { Text("Password") }, singleLine = true, colors = fieldColors,
-            visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-        )
-        error?.let { Text(it, color = Color(0xFFF15E6C), style = MaterialTheme.typography.bodyMedium) }
-        Button(
-            enabled = !busy && servers.isNotBlank() && user.isNotBlank() && pass.isNotEmpty(),
-            onClick = {
-                busy = true
-                error = null
-                scope.launch {
-                    val eps = servers.lines().filter { it.isNotBlank() }.map(::normalizeEndpoint).distinct()
-                    // Credentials are checked on the first endpoint that accepts them; only the salted token is kept.
-                    var last: Exception? = null
-                    val ok = withContext(Dispatchers.IO) {
-                        eps.firstNotNullOfOrNull { ep ->
-                            try { ep to Api.login(ep, user.trim(), pass) } catch (e: Exception) { last = e; null }
-                        }
-                    }
-                    if (ok == null) {
-                        error = (last as? xyz.yuuki.navidroid.ApiException)?.message ?: "Couldn't reach any of those addresses"
-                        busy = false
-                        return@launch
-                    }
-                    val prefs = App.it.prefs
-                    prefs.endpoints = eps
-                    prefs.username = user.trim()
-                    prefs.token = ok.second.first
-                    prefs.salt = ok.second.second
-                    prefs.active = ok.first
-                    App.it.api = Api(prefs, App.it.scope)
-                    App.it.scope.launch { App.it.api.pickFastest() }
-                    onDone()
+    fun submit() {
+        if (!canSubmit) return
+        busy = true
+        error = null
+        scope.launch {
+            val eps = servers.lines().filter { it.isNotBlank() }.map(::normalizeEndpoint).distinct()
+            // Credentials are checked on the first endpoint that accepts them; only the salted token is kept.
+            var last: Exception? = null
+            val ok = withContext(Dispatchers.IO) {
+                eps.firstNotNullOfOrNull { ep ->
+                    try { ep to Api.login(ep, user.trim(), pass) } catch (e: Exception) { last = e; null }
                 }
-            },
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black),
+            }
+            if (ok == null) {
+                error = (last as? xyz.yuuki.navidroid.ApiException)?.message ?: "Couldn't reach any of those addresses"
+                busy = false
+                return@launch
+            }
+            val prefs = App.it.prefs
+            prefs.endpoints = eps
+            prefs.username = user.trim()
+            prefs.token = ok.second.first
+            prefs.salt = ok.second.second
+            prefs.active = ok.first
+            App.it.api = Api(prefs, App.it.scope)
+            App.it.scope.launch { App.it.api.pickFastest() }
+            onDone()
+        }
+    }
+
+    Box(Modifier.fillMaxSize().background(Bg)) {
+        Box(
+            Modifier.fillMaxWidth().height(400.dp)
+                .background(Brush.radialGradient(listOf(Green.copy(alpha = .35f), Green.copy(alpha = .08f), Color.Transparent))),
+        )
+        Column(
+            Modifier.fillMaxSize().systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            if (busy) CircularProgressIndicator(Modifier.size(22.dp), color = Color.Black, strokeWidth = 2.dp) else Text("Log in", style = MaterialTheme.typography.labelLarge)
+            Image(
+                painterResource(R.drawable.ic_launcher_fg), null,
+                Modifier.size(200.dp).graphicsLayer { rotationZ = spin },
+            )
+            Text("Navidroid", style = MaterialTheme.typography.displaySmall, modifier = Modifier.offset(y = (-28).dp))
+            Text(
+                "Your whole library, streamed from your own Navidrome server.",
+                style = MaterialTheme.typography.bodyMedium.copy(color = Sub), textAlign = TextAlign.Center,
+                modifier = Modifier.offset(y = (-20).dp).padding(horizontal = 16.dp),
+            )
+            Spacer(Modifier.height(8.dp))
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    servers, { servers = it }, Modifier.fillMaxWidth(), shape = fieldShape, colors = fieldColors, enabled = !busy,
+                    label = { Text("Server addresses") }, placeholder = { Text("music.example.com\n192.168.1.10:4533") }, minLines = 2,
+                    leadingIcon = { Icon(Icons.Rounded.Dns, null) },
+                    supportingText = { Text("One per line. The fastest one is used, and the app switches if it goes down.") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
+                )
+                OutlinedTextField(
+                    user, { user = it }, Modifier.fillMaxWidth().semantics { contentType = ContentType.Username },
+                    shape = fieldShape, colors = fieldColors, enabled = !busy, singleLine = true,
+                    label = { Text("Username") }, leadingIcon = { Icon(Icons.Rounded.Person, null) },
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, imeAction = ImeAction.Next),
+                )
+                OutlinedTextField(
+                    pass, { pass = it }, Modifier.fillMaxWidth().semantics { contentType = ContentType.Password },
+                    shape = fieldShape, colors = fieldColors, enabled = !busy, singleLine = true,
+                    label = { Text("Password") }, leadingIcon = { Icon(Icons.Rounded.Lock, null) },
+                    trailingIcon = {
+                        IconButton({ showPass = !showPass }) {
+                            Icon(if (showPass) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility, if (showPass) "Hide password" else "Show password")
+                        }
+                    },
+                    visualTransformation = if (showPass) VisualTransformation.None else PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Go),
+                    keyboardActions = KeyboardActions(onGo = { submit() }),
+                )
+            }
+            error?.let {
+                Row(
+                    Modifier.padding(top = 16.dp).fillMaxWidth().clip(fieldShape).background(Red.copy(alpha = .14f)).padding(14.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.ErrorOutline, null, tint = Red)
+                    Text(it, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+            Button(
+                ::submit, Modifier.padding(top = 24.dp).fillMaxWidth().height(56.dp), enabled = canSubmit,
+                colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black, disabledContainerColor = Elevated, disabledContentColor = Faint),
+            ) {
+                if (busy) CircularProgressIndicator(Modifier.size(22.dp), color = Color.Black, strokeWidth = 2.dp)
+                else Text("Log in", style = MaterialTheme.typography.titleMedium)
+            }
         }
     }
 }
+
+private val Red = Color(0xFFF15E6C)
 
 @Composable
 private fun Group(title: String) = Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 16.dp, top = 28.dp, bottom = 8.dp))
@@ -213,12 +283,26 @@ fun SettingsScreen(onLogout: () -> Unit) {
         }
     }
     LaunchedEffect(Unit) { recheck() }
+    val pickAvatar = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                runCatching { ctx.contentResolver.openInputStream(uri)!!.use { i -> avatarFile.outputStream().use { i.copyTo(it) } } }
+            }
+            avatarVersion++
+        }
+    }
 
     LazyColumn(Modifier.fillMaxSize()) {
         item { BackTitle("Settings") }
         item {
-            SettingRow(displayName(), "Logged in as ${prefs.username}") {
-                OutlinedButton(onLogout) { Text("Log out", color = Color.White) }
+            Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Avatar(48.dp) { pickAvatar.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+                Box(Modifier.weight(1f)) {
+                    SettingRow(displayName(), "Logged in as ${prefs.username}") {
+                        OutlinedButton(onLogout) { Text("Log out", color = Color.White) }
+                    }
+                }
             }
         }
         item {

@@ -362,12 +362,12 @@ fun FavoriteMark() = Icon(Icons.Rounded.Favorite, "Saved", Modifier.padding(end 
 fun DownloadedMark() = Icon(Icons.Rounded.ArrowCircleDown, "Downloaded", Modifier.padding(end = 4.dp).size(14.dp), tint = Green)
 
 @Composable
-fun TrackRow(song: Song, onClick: () -> Unit, number: Int? = null, showArt: Boolean = true) {
+fun TrackRow(song: Song, onClick: () -> Unit, number: Int? = null, showArt: Boolean = true, inset: androidx.compose.ui.unit.Dp = 16.dp) {
     val player = LocalPlayer.current
     val current = player?.song?.id == song.id
     val states by App.it.offline.states.collectAsStateWithLifecycle()
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = 16.dp, top = 6.dp, bottom = 6.dp),
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = inset, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (number != null) Text("$number", Modifier.width(28.dp), color = if (current) Green else Sub, style = MaterialTheme.typography.bodyMedium)

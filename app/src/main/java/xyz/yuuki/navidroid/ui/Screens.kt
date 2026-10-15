@@ -62,6 +62,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -72,17 +73,23 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.exoplayer.offline.Download
@@ -101,12 +108,30 @@ import xyz.yuuki.navidroid.Tile
 import xyz.yuuki.navidroid.buildHome
 import xyz.yuuki.navidroid.list
 import xyz.yuuki.navidroid.tile
+import java.io.File
 import java.util.Calendar
 
 private val api get() = App.it.api
 private val offline get() = App.it.offline
 
 fun displayName() = App.it.prefs.username.orEmpty().replaceFirstChar { it.uppercase() }
+
+/** Profile picture, kept on-device since Subsonic has no avatar upload. Bump [avatarVersion] after writing it. */
+val avatarFile get() = File(App.it.filesDir, "avatar")
+var avatarVersion by mutableIntStateOf(0)
+
+@Composable
+fun Avatar(size: Dp, onClick: () -> Unit) = Box(
+    Modifier.size(size).clip(CircleShape).background(Color(0xFFE1118C)).clickable(onClick = onClick),
+    contentAlignment = Alignment.Center,
+) {
+    Text(displayName().take(1), fontWeight = FontWeight.W800)
+    val v = avatarVersion
+    if (avatarFile.exists()) AsyncImage(
+        ImageRequest.Builder(LocalContext.current).data(avatarFile).memoryCacheKey("avatar:$v").build(),
+        null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop,
+    )
+}
 
 suspend fun loadHome(): Home = coroutineScope {
     val playlists = async { api.playlists() }
@@ -264,22 +289,59 @@ fun SearchScreen() {
             item(span = { GridItemSpan(maxLineSpan) }) { Text("Browse all", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp)) }
             items(genres.data.orEmpty().take(60), key = { it.name }) { GenreCard(it) }
         } else {
-            val matches = genres.data.orEmpty().filter { it.name.contains(q.trim(), ignoreCase = true) }.take(6)
-            items(matches, key = { "g" + it.name }) { GenreCard(it) }
-        }
-        if (q.isNotBlank() && r != null) {
-            items(r.artists, key = { "ar" + it.id }, span = { GridItemSpan(maxLineSpan) }) { a ->
-                ListRow(a.name, "Artist", { Cover(a.coverArt, 120, Modifier.size(52.dp), CircleShape) }) { nav.go(Route.Open(Kind.Artist, a.id)) }
-            }
-            items(r.albums, key = { "al" + it.id }, span = { GridItemSpan(maxLineSpan) }) { a ->
-                ListRow(a.name, "Album • ${a.artist}", { Cover(a.coverArt, 120, Modifier.size(52.dp)) }) { nav.go(Route.Open(Kind.Album, a.id)) }
-            }
-            items(r.songs, key = { "s" + it.id }, span = { GridItemSpan(maxLineSpan) }) { s ->
-                TrackRow(s, { player?.play(listOf(s), from = "Search") })
+            val genreHits = genres.data.orEmpty().filter { it.name.contains(q.trim(), ignoreCase = true) }.take(4)
+            items(rankHits(q, genreHits, r?.artists.orEmpty(), r?.albums.orEmpty(), r?.songs.orEmpty()), key = { hitKey(it) }, span = { GridItemSpan(maxLineSpan) }) { h ->
+                when (h) {
+                    is xyz.yuuki.navidroid.Genre -> ListRow(h.name, "Genre", { GenreThumb(h.name) }) { nav.go(Route.Open(Kind.Genre, h.name)) }
+                    is xyz.yuuki.navidroid.Artist -> ListRow(h.name, "Artist", { Cover(h.coverArt, 120, Modifier.size(48.dp), CircleShape) }) { nav.go(Route.Open(Kind.Artist, h.id)) }
+                    is xyz.yuuki.navidroid.Album -> ListRow(h.name, "Album • ${h.artist}", { Cover(h.coverArt, 120, Modifier.size(48.dp)) }) { nav.go(Route.Open(Kind.Album, h.id)) }
+                    is xyz.yuuki.navidroid.Song -> TrackRow(h, { player?.play(listOf(h), from = "Search") }, inset = 0.dp)
+                }
             }
         }
         item(span = { GridItemSpan(maxLineSpan) }) { BottomSpacer() }
     }
+}
+
+private fun hitKey(h: Any) = when (h) {
+    is xyz.yuuki.navidroid.Genre -> "g" + h.name
+    is xyz.yuuki.navidroid.Artist -> "ar" + h.id
+    is xyz.yuuki.navidroid.Album -> "al" + h.id
+    else -> "s" + (h as xyz.yuuki.navidroid.Song).id
+}
+
+/**
+ * One mixed list, best match first: exact name, then name starting with the query, then every
+ * word found in the name, then every word found across name + artist/album (so "artist song"
+ * works in any order). Ties keep the server's order and interleave the kinds.
+ */
+fun rankHits(q: String, vararg kinds: List<Any>): List<Any> {
+    val query = q.trim()
+    val words = query.lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
+    fun tier(h: Any): Int {
+        val (name, rest) = when (h) {
+            is xyz.yuuki.navidroid.Genre -> h.name to ""
+            is xyz.yuuki.navidroid.Artist -> h.name to ""
+            is xyz.yuuki.navidroid.Album -> h.name to h.artist
+            is xyz.yuuki.navidroid.Song -> h.title to "${h.artist} ${h.album}"
+            else -> "" to ""
+        }
+        val n = name.lowercase()
+        return when {
+            n == query.lowercase() -> 0
+            n.startsWith(query.lowercase()) -> 1
+            words.all { it in n } -> 2
+            words.all { it in "$n ${rest.lowercase()}" } -> 3
+            else -> 4
+        }
+    }
+    return kinds.flatMap { it.withIndex() }.sortedWith(compareBy({ tier(it.value) }, { it.index })).map { it.value }
+}
+
+@Composable
+private fun GenreThumb(name: String) {
+    val art by androidx.compose.runtime.produceState<String?>(null, name) { value = runCatching { api.genreCover(name) }.getOrNull() }
+    Cover(art, 120, Modifier.size(48.dp))
 }
 
 @Composable
@@ -293,16 +355,18 @@ private fun GenreCard(g: xyz.yuuki.navidroid.Genre) {
         val hsv = FloatArray(3).also { android.graphics.Color.colorToHSV(cover.toArgb(), it) }
         Color(android.graphics.Color.HSVToColor(floatArrayOf(hsv[0], hsv[1].coerceAtLeast(0.45f), 0.6f)))
     }
-    Box(
-        Modifier.height(100.dp).clip(RoundedCornerShape(8.dp))
-            .background(Brush.linearGradient(listOf(lerp(bg, Color.White, 0.18f), bg)))
-            .clickable { nav.go(Route.Open(Kind.Genre, g.name)) }.padding(12.dp),
-    ) {
+    Box(Modifier.height(100.dp).clip(RoundedCornerShape(8.dp)).background(bg).clickable { nav.go(Route.Open(Kind.Genre, g.name)) }) {
+        // The cover again, blurred behind a wash that is solid under the title and thins out towards the art.
+        if (art != null) Cover(art, 200, Modifier.fillMaxSize().scale(1.3f).blur(10.dp), RoundedCornerShape(0.dp))
+        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(bg.copy(alpha = 0.92f), bg.copy(alpha = 0.6f), Color.Transparent))))
         if (art != null) Cover(
             art, 200,
-            Modifier.align(Alignment.BottomEnd).offset(x = 20.dp, y = 12.dp).size(78.dp).rotate(25f).shadow(10.dp, RoundedCornerShape(4.dp)),
+            Modifier.align(Alignment.BottomEnd).offset(x = 8.dp, y = 0.dp).size(78.dp).rotate(25f).shadow(10.dp, RoundedCornerShape(4.dp)),
         )
-        Text(g.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(end = 44.dp))
+        Text(
+            g.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 56.dp),
+        )
     }
 }
 
@@ -352,9 +416,7 @@ fun LibraryScreen() {
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.statusBarsPadding().padding(horizontal = 16.dp)) {
             Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(34.dp).clip(CircleShape).background(Color(0xFFE1118C)).clickable { nav.go(Route.Settings) }, contentAlignment = Alignment.Center) {
-                    Text(displayName().take(1), fontWeight = FontWeight.W800)
-                }
+                Avatar(34.dp) { nav.go(Route.Settings) }
                 Spacer(Modifier.width(12.dp))
                 Text("Your Library", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
                 IconButton({ nav.go(Route.Downloads) }) { Icon(Icons.Rounded.DownloadForOffline, "Downloads") }
