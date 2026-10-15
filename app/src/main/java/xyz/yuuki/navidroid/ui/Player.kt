@@ -1,6 +1,7 @@
 package xyz.yuuki.navidroid.ui
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animate
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
@@ -48,6 +49,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -57,15 +59,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.C
 import androidx.media3.common.MediaMetadata
@@ -204,8 +212,9 @@ fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
     val color = rememberCoverColor(song.coverArt)
     val lyrics = rememberLoad("lyrics:${song.id}") { App.it.api.lyrics(song.id) }
     val pos = rememberPosition(p, 200)
+    val pull = rememberPullToClose(onClose)
 
-    Box(Modifier.fillMaxSize().background(Bg).background(Brush.verticalGradient(listOf(color, lerp(color, Bg, .6f), Bg)))) {
+    Box(Modifier.fillMaxSize().then(pull).background(Bg).background(Brush.verticalGradient(listOf(color, lerp(color, Bg, .6f), Bg)))) {
         LazyColumn(Modifier.fillMaxSize().statusBarsPadding()) {
             item("top") {
                 Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -262,6 +271,36 @@ fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
             }
         }
     }
+}
+
+/** Dragging down past the top of the list moves the screen with the finger; let go far or fast enough and it closes. */
+@Composable
+private fun rememberPullToClose(onClose: () -> Unit): Modifier {
+    var offset by remember { mutableFloatStateOf(0f) }
+    val far = with(LocalDensity.current) { 120.dp.toPx() }
+    val connection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (offset <= 0f || available.y >= 0f) return Offset.Zero
+                val used = maxOf(available.y, -offset)
+                offset += used
+                return Offset(0f, used)
+            }
+
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                if (source != NestedScrollSource.UserInput || available.y <= 0f) return Offset.Zero
+                offset += available.y
+                return Offset(0f, available.y)
+            }
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                if (offset <= 0f) return Velocity.Zero
+                if (offset > far || available.y > 2000f) onClose() else animate(offset, 0f) { v, _ -> offset = v }
+                return available
+            }
+        }
+    }
+    return Modifier.nestedScroll(connection).graphicsLayer { translationY = offset }
 }
 
 /** Album art you can swipe sideways to skip, like the big streaming apps. */
