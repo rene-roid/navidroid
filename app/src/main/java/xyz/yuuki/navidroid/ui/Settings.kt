@@ -64,6 +64,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -180,21 +181,21 @@ fun LoginScreen(onDone: () -> Unit) {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     servers, { servers = it }, Modifier.fillMaxWidth(), shape = fieldShape, colors = fieldColors, enabled = !busy,
-                    label = { Text("Server addresses") }, placeholder = { Text("music.example.com\n192.168.1.10:4533") }, minLines = 2,
+                    label = { StateText("Server addresses") }, placeholder = { StateText("music.example.com\n192.168.1.10:4533") }, minLines = 2,
                     leadingIcon = { Icon(Icons.Rounded.Dns, null) },
-                    supportingText = { Text("One per line. The fastest one is used, and the app switches if it goes down.") },
+                    supportingText = { StateText("One per line. The fastest one is used, and the app switches if it goes down.") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
                 )
                 OutlinedTextField(
                     user, { user = it }, Modifier.fillMaxWidth().semantics { contentType = ContentType.Username },
                     shape = fieldShape, colors = fieldColors, enabled = !busy, singleLine = true,
-                    label = { Text("Username") }, leadingIcon = { Icon(Icons.Rounded.Person, null) },
+                    label = { StateText("Username") }, leadingIcon = { Icon(Icons.Rounded.Person, null) },
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, imeAction = ImeAction.Next),
                 )
                 OutlinedTextField(
                     pass, { pass = it }, Modifier.fillMaxWidth().semantics { contentType = ContentType.Password },
                     shape = fieldShape, colors = fieldColors, enabled = !busy, singleLine = true,
-                    label = { Text("Password") }, leadingIcon = { Icon(Icons.Rounded.Lock, null) },
+                    label = { StateText("Password") }, leadingIcon = { Icon(Icons.Rounded.Lock, null) },
                     trailingIcon = {
                         IconButton({ showPass = !showPass }) {
                             Icon(if (showPass) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility, if (showPass) "Hide password" else "Show password")
@@ -219,13 +220,17 @@ fun LoginScreen(onDone: () -> Unit) {
                 colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black, disabledContainerColor = Elevated, disabledContentColor = Faint),
             ) {
                 if (busy) CircularProgressIndicator(Modifier.size(22.dp), color = Color.Black, strokeWidth = 2.dp)
-                else Text("Log in", style = MaterialTheme.typography.titleMedium)
+                else Text("Log in", color = LocalContentColor.current, style = MaterialTheme.typography.titleMedium)
             }
         }
     }
 }
 
 private val Red = Color(0xFFF15E6C)
+
+/** Our typography bakes in text colors, which would override the field's focused/disabled colors. */
+@Composable
+private fun StateText(text: String) = Text(text, color = LocalContentColor.current)
 
 @Composable
 private fun Group(title: String) = Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 16.dp, top = 28.dp, bottom = 8.dp))

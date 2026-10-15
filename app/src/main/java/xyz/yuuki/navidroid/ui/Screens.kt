@@ -164,6 +164,8 @@ fun HomeScreen() {
         LazyColumn(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color(0xFF2E2745), .35f to Bg))) {
             item("top") {
                 Row(Modifier.statusBarsPadding().padding(start = 16.dp, end = 4.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Avatar(34.dp) { nav.go(Route.Settings) }
+                    Spacer(Modifier.width(12.dp))
                     Text(home.data?.greeting ?: "Hello", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
                     IconButton({ nav.go(Route.Downloads) }) { Icon(Icons.Rounded.DownloadForOffline, "Downloads") }
                     IconButton({ nav.go(Route.Settings) }) { Icon(Icons.Rounded.Settings, "Settings") }
