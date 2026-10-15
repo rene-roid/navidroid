@@ -1,0 +1,203 @@
+package xyz.yuuki.navidroid
+
+import android.Manifest
+import android.content.ComponentName
+import android.content.pm.PackageManager
+import android.graphics.Color as AndroidColor
+import android.os.Build
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.LibraryMusic
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
+import androidx.navigation3.runtime.NavEntry
+import androidx.navigation3.ui.NavDisplay
+import com.google.common.util.concurrent.ListenableFuture
+import xyz.yuuki.navidroid.ui.ArtistScreen
+import xyz.yuuki.navidroid.ui.Bg
+import xyz.yuuki.navidroid.ui.CollectionScreen
+import xyz.yuuki.navidroid.ui.DownloadsScreen
+import xyz.yuuki.navidroid.ui.HomeScreen
+import xyz.yuuki.navidroid.ui.LibraryScreen
+import xyz.yuuki.navidroid.ui.LocalNav
+import xyz.yuuki.navidroid.ui.LocalPlayer
+import xyz.yuuki.navidroid.ui.LoginScreen
+import xyz.yuuki.navidroid.ui.MiniPlayer
+import xyz.yuuki.navidroid.ui.MoreScreen
+import xyz.yuuki.navidroid.ui.Nav
+import xyz.yuuki.navidroid.ui.NavidroidTheme
+import xyz.yuuki.navidroid.ui.NowPlaying
+import xyz.yuuki.navidroid.ui.PlayerState
+import xyz.yuuki.navidroid.ui.Route
+import xyz.yuuki.navidroid.ui.SearchScreen
+import xyz.yuuki.navidroid.ui.SettingsScreen
+import xyz.yuuki.navidroid.ui.Sub
+
+class MainActivity : ComponentActivity() {
+    private var future: ListenableFuture<MediaController>? = null
+    private var player by mutableStateOf<PlayerState?>(null)
+    private var loggedIn by mutableStateOf(false)
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge(SystemBarStyle.dark(AndroidColor.TRANSPARENT), SystemBarStyle.dark(AndroidColor.TRANSPARENT))
+        loggedIn = App.it.prefs.loggedIn
+        if (loggedIn) connect()
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            registerForActivityResult(ActivityResultContracts.RequestPermission()) {}.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        setContent {
+            NavidroidTheme {
+                if (!loggedIn) LoginScreen {
+                    loggedIn = true
+                    connect()
+                    App.it.offline.sync()
+                } else CompositionLocalProvider(LocalPlayer provides player) {
+                    Shell(::logout)
+                }
+            }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (loggedIn) App.it.offline.syncIfStale()
+    }
+
+    private fun connect() {
+        if (future != null) return
+        val f = MediaController.Builder(this, SessionToken(this, ComponentName(this, PlaybackService::class.java))).buildAsync()
+        future = f
+        f.addListener({ player = PlayerState(f.get()) }, mainExecutor)
+    }
+
+    private fun logout() {
+        player?.c?.run {
+            stop()
+            clearMediaItems()
+        }
+        val prefs = App.it.prefs
+        prefs.token = null
+        prefs.salt = null
+        prefs.endpoints = emptyList()
+        loggedIn = false
+    }
+
+    override fun onDestroy() {
+        future?.let(MediaController::releaseFuture)
+        super.onDestroy()
+    }
+}
+
+@Composable
+private fun Shell(onLogout: () -> Unit) {
+    val nav = remember { Nav() }
+    val player = LocalPlayer.current
+    var nowPlaying by rememberSaveable { mutableStateOf(false) }
+
+    CompositionLocalProvider(LocalNav provides nav) {
+        Box(Modifier.fillMaxSize().background(Bg)) {
+            NavDisplay(
+                backStack = nav.stack,
+                onBack = { nav.back() },
+                transitionSpec = { (slideInHorizontally(tween(260)) { it / 5 } + fadeIn(tween(260))) togetherWith fadeOut(tween(160)) },
+                popTransitionSpec = { fadeIn(tween(200)) togetherWith (slideOutHorizontally(tween(220)) { it / 5 } + fadeOut(tween(220))) },
+                predictivePopTransitionSpec = { fadeIn(tween(200)) togetherWith (slideOutHorizontally(tween(220)) { it / 5 } + fadeOut(tween(220))) },
+                entryProvider = { r ->
+                    NavEntry(r) {
+                        when (r) {
+                            Route.Home -> HomeScreen()
+                            Route.Search -> SearchScreen()
+                            Route.Library -> LibraryScreen()
+                            Route.Settings -> SettingsScreen(onLogout)
+                            Route.Downloads -> DownloadsScreen()
+                            is Route.More -> MoreScreen(r.section)
+                            is Route.Open -> if (r.kind == Kind.Artist) ArtistScreen(r.id) else CollectionScreen(r.kind, r.id)
+                        }
+                    }
+                },
+            )
+
+            Column(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                    .background(Brush.verticalGradient(0f to Color.Transparent, .35f to Color.Black.copy(alpha = .85f), 1f to Color.Black)),
+            ) {
+                Spacer(Modifier.height(16.dp))
+                player?.let { MiniPlayer(it) { nowPlaying = true } }
+                Row(Modifier.fillMaxWidth().navigationBarsPadding().height(60.dp)) {
+                    val tab = nav.stack.first()
+                    TabItem("Home", if (tab == Route.Home) Icons.Rounded.Home else Icons.Outlined.Home, tab == Route.Home) { nav.tab(Route.Home) }
+                    TabItem("Search", Icons.Rounded.Search, tab == Route.Search) { nav.tab(Route.Search) }
+                    TabItem("Your Library", if (tab == Route.Library) Icons.Rounded.LibraryMusic else Icons.Outlined.LibraryMusic, tab == Route.Library) { nav.tab(Route.Library) }
+                }
+            }
+
+            AnimatedVisibility(
+                nowPlaying && player?.song != null,
+                enter = slideInVertically(tween(320)) { it },
+                exit = slideOutVertically(tween(260)) { it },
+            ) {
+                player?.let { NowPlaying(it) { nowPlaying = false } }
+            }
+            BackHandler(nowPlaying) { nowPlaying = false }
+        }
+    }
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.RowScope.TabItem(label: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit) = Column(
+    Modifier.weight(1f).height(60.dp).clickable(remember { MutableInteractionSource() }, null, onClick = onClick).padding(top = 8.dp),
+    horizontalAlignment = Alignment.CenterHorizontally,
+) {
+    val tint = if (selected) Color.White else Sub
+    Icon(icon, label, Modifier.size(26.dp), tint = tint)
+    Text(label, style = MaterialTheme.typography.labelSmall, color = tint)
+}
