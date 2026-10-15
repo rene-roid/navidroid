@@ -12,7 +12,9 @@ An Android client for a Navidrome server, styled after its Spotify-like web UI.
   launch, so rotating mixes pick up new songs and drop removed ones.
 - Plays of downloaded songs are still reported to Navidrome (now playing and scrobbles);
   scrobbles made offline are queued and sent with their original time.
-- Synced lyrics, swipe-to-skip artwork, persistent queue, separate Wi-Fi and mobile quality.
+- Save albums, artists and playlists to Your Library; generated mixes get their own tab.
+- Synced lyrics, swipe to skip (artwork or mini player), swipe down to close the player,
+  persistent queue, separate Wi-Fi and mobile quality.
 
 ## Build
 

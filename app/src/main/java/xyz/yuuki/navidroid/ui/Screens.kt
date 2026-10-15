@@ -2,6 +2,7 @@ package xyz.yuuki.navidroid.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,15 +28,21 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.ArrowCircleDown
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudOff
+import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.DownloadForOffline
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shuffle
@@ -316,13 +323,15 @@ fun LibraryScreen() {
                 Text("Your Library", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
                 IconButton({ nav.go(Route.Downloads) }) { Icon(Icons.Rounded.DownloadForOffline, "Downloads") }
             }
-            Row(Modifier.padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("Playlists", "Albums", "Artists", "Downloaded").forEach { t ->
+            Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LIBRARY_TABS.forEach { (t, icon) ->
                     FilterChip(
-                        tab == t, { tab = t }, { Text(t) }, shape = RoundedCornerShape(32.dp), border = null,
+                        tab == t, { tab = t }, { Text(t, maxLines = 1, softWrap = false) },
+                        leadingIcon = { Icon(icon, null, Modifier.size(18.dp)) },
+                        shape = RoundedCornerShape(32.dp), border = null,
                         colors = FilterChipDefaults.filterChipColors(
-                            containerColor = Tile, labelColor = Color.White,
-                            selectedContainerColor = Green, selectedLabelColor = Color.Black,
+                            containerColor = Tile, labelColor = Color.White, iconColor = Color.White,
+                            selectedContainerColor = Green, selectedLabelColor = Color.Black, selectedLeadingIconColor = Color.Black,
                         ),
                     )
                 }
@@ -338,16 +347,30 @@ fun LibraryScreen() {
             // Saved items first; the server list is refreshed on every visit, overrides cover the gap.
             val savedAlbums = starred.data?.list("album").orEmpty().map(xyz.yuuki.navidroid.Album::from).filter { Likes.isLiked(it.id, true) }
             val savedArtists = starred.data?.list("artist").orEmpty().map(xyz.yuuki.navidroid.Artist::from).filter { Likes.isLiked(it.id, true) }
+            @Composable
+            fun playlistRow(p: xyz.yuuki.navidroid.Playlist) {
+                val t = p.tile()
+                ListRow(t.title, if (p.mix != null) "Mix • ${p.mix.by}" else "Playlist • ${p.owner}", { TileCover(Kind.Playlist, p.id, p.coverArt, p.mix, Modifier.size(56.dp), 120) }, { mark(Kind.Playlist, p.id, p.id in Likes.playlists) }) {
+                    nav.open(t)
+                }
+            }
+            val (mixes, ownPlaylists) = playlists.data.orEmpty().sortedBy { it.id !in Likes.playlists }.partition { it.mix != null }
             when (tab) {
                 "Playlists" -> {
                     item("liked") {
                         ListRow("Liked Songs", "Playlist", { LikedCover(Modifier.size(56.dp)) }, { mark(Kind.Liked, "liked") }) { nav.go(Route.Open(Kind.Liked, "liked")) }
                     }
-                    items(playlists.data.orEmpty().sortedWith(compareBy({ it.id !in Likes.playlists }, { it.mix != null })), key = { it.id }) { p ->
-                        val t = p.tile()
-                        ListRow(t.title, if (p.mix != null) "Mix • ${p.mix.by}" else "Playlist • ${p.owner}", { TileCover(Kind.Playlist, p.id, p.coverArt, p.mix, Modifier.size(56.dp), 120) }, { mark(Kind.Playlist, p.id, p.id in Likes.playlists) }) {
-                            nav.open(t)
+                    items(ownPlaylists, key = { it.id }) { playlistRow(it) }
+                }
+                "Mixes" -> {
+                    val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+                    val sorted = mixes.sortedWith(compareBy({ it.id !in Likes.playlists }, { xyz.yuuki.navidroid.mixOrder(it.mix!!, hour) }))
+                    MIX_SECTIONS.forEach { (section, title) ->
+                        val group = sorted.filter { it.mix!!.section == section }
+                        if (group.isNotEmpty()) item("section:$section") {
+                            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.W700, modifier = Modifier.padding(top = 16.dp, bottom = 4.dp))
                         }
+                        items(group, key = { it.id }) { playlistRow(it) }
                     }
                 }
                 "Albums" -> {
@@ -376,6 +399,22 @@ fun LibraryScreen() {
         }
     }
 }
+
+private val LIBRARY_TABS = listOf(
+    "Playlists" to Icons.AutoMirrored.Rounded.QueueMusic,
+    "Mixes" to Icons.Rounded.AutoAwesome,
+    "Albums" to Icons.Rounded.Album,
+    "Artists" to Icons.Rounded.Person,
+    "Downloaded" to Icons.Rounded.DownloadDone,
+)
+
+/** Mix sections, in the same order and wording as the home screen. */
+private val MIX_SECTIONS = listOf(
+    "madeForYou" to "Made For You",
+    "topMixes" to "Your top mixes",
+    "timeOfDay" to "Mixes for your day",
+    "favorites" to "Your favorites, through the years",
+)
 
 // ---- playlist / album / liked / genre ---------------------------------------------------------
 
