@@ -42,6 +42,8 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.DownloadForOffline
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
@@ -292,6 +294,7 @@ fun ListRow(title: String, subtitle: String, cover: @Composable () -> Unit, trai
 fun LibraryScreen() {
     val nav = LocalNav.current
     var tab by rememberSaveable { mutableStateOf("Playlists") }
+    var onlySaved by rememberSaveable { mutableStateOf(false) }
     val pins by offline.pins.collectAsStateWithLifecycle()
     val playlists = rememberLoad("playlists") { api.playlists() }
     val artists = rememberLoad("artists") { api.artists() }
@@ -301,8 +304,8 @@ fun LibraryScreen() {
     val list = rememberLazyListState()
 
     // Albums page in as you scroll.
-    LaunchedEffect(tab) {
-        if (tab != "Albums") return@LaunchedEffect
+    LaunchedEffect(tab, onlySaved) {
+        if (tab != "Albums" || onlySaved) return@LaunchedEffect
         snapshotFlow { list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
             .filter { it >= albums.size - 20 && !albumsDone }
             .distinctUntilChanged()
@@ -323,16 +326,22 @@ fun LibraryScreen() {
                 Text("Your Library", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
                 IconButton({ nav.go(Route.Downloads) }) { Icon(Icons.Rounded.DownloadForOffline, "Downloads") }
             }
+            val chipColors = FilterChipDefaults.filterChipColors(
+                containerColor = Tile, labelColor = Color.White, iconColor = Color.White,
+                selectedContainerColor = Green, selectedLabelColor = Color.Black, selectedLeadingIconColor = Color.Black,
+            )
             Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Narrows whichever tab is open to what you saved.
+                FilterChip(
+                    onlySaved, { onlySaved = !onlySaved },
+                    { Icon(if (onlySaved) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Only saved", Modifier.size(18.dp)) },
+                    shape = RoundedCornerShape(32.dp), border = null, colors = chipColors,
+                )
                 LIBRARY_TABS.forEach { (t, icon) ->
                     FilterChip(
                         tab == t, { tab = t }, { Text(t, maxLines = 1, softWrap = false) },
                         leadingIcon = { Icon(icon, null, Modifier.size(18.dp)) },
-                        shape = RoundedCornerShape(32.dp), border = null,
-                        colors = FilterChipDefaults.filterChipColors(
-                            containerColor = Tile, labelColor = Color.White, iconColor = Color.White,
-                            selectedContainerColor = Green, selectedLabelColor = Color.Black, selectedLeadingIconColor = Color.Black,
-                        ),
+                        shape = RoundedCornerShape(32.dp), border = null, colors = chipColors,
                     )
                 }
             }
@@ -354,7 +363,21 @@ fun LibraryScreen() {
                     nav.open(t)
                 }
             }
-            val (mixes, ownPlaylists) = playlists.data.orEmpty().sortedBy { it.id !in Likes.playlists }.partition { it.mix != null }
+            val savedAlbumIds = savedAlbums.map { it.id }.toSet()
+            val savedArtistIds = savedArtists.map { it.id }.toSet()
+            fun saved(kind: Kind, id: String) = when (kind) {
+                Kind.Playlist -> id in Likes.playlists
+                Kind.Album -> id in savedAlbumIds
+                Kind.Artist -> id in savedArtistIds
+                Kind.Liked -> true
+                Kind.Genre -> false
+            }
+            fun emptySaved() = item("none") {
+                Text("Nothing saved here yet. Tap the heart on a playlist, album or artist.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 24.dp))
+            }
+            val (mixes, ownPlaylists) = playlists.data.orEmpty()
+                .filter { !onlySaved || it.id in Likes.playlists }
+                .sortedBy { it.id !in Likes.playlists }.partition { it.mix != null }
             when (tab) {
                 "Playlists" -> {
                     item("liked") {
@@ -363,6 +386,7 @@ fun LibraryScreen() {
                     items(ownPlaylists, key = { it.id }) { playlistRow(it) }
                 }
                 "Mixes" -> {
+                    if (onlySaved && mixes.isEmpty()) emptySaved()
                     val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
                     val sorted = mixes.sortedWith(compareBy({ it.id !in Likes.playlists }, { xyz.yuuki.navidroid.mixOrder(it.mix!!, hour) }))
                     MIX_SECTIONS.forEach { (section, title) ->
@@ -374,24 +398,25 @@ fun LibraryScreen() {
                     }
                 }
                 "Albums" -> {
-                    val ids = savedAlbums.map { it.id }.toSet()
-                    items(savedAlbums + albums.filter { it.id !in ids }, key = { it.id }) { a ->
-                        ListRow(a.name, "Album • ${a.artist}", { Cover(a.coverArt, 120, Modifier.size(56.dp)) }, { mark(Kind.Album, a.id, a.id in ids) }) { nav.go(Route.Open(Kind.Album, a.id)) }
+                    if (onlySaved && savedAlbums.isEmpty()) emptySaved()
+                    items(if (onlySaved) savedAlbums else savedAlbums + albums.filter { it.id !in savedAlbumIds }, key = { it.id }) { a ->
+                        ListRow(a.name, "Album • ${a.artist}", { Cover(a.coverArt, 120, Modifier.size(56.dp)) }, { mark(Kind.Album, a.id, a.id in savedAlbumIds) }) { nav.go(Route.Open(Kind.Album, a.id)) }
                     }
                 }
                 "Artists" -> {
-                    val ids = savedArtists.map { it.id }.toSet()
-                    items(savedArtists + artists.data.orEmpty().filter { it.id !in ids }, key = { it.id }) { a ->
-                        ListRow(a.name, "Artist", { Cover(a.coverArt, 120, Modifier.size(56.dp), CircleShape) }, { mark(Kind.Artist, a.id, a.id in ids) }) { nav.go(Route.Open(Kind.Artist, a.id)) }
+                    if (onlySaved && savedArtists.isEmpty()) emptySaved()
+                    items(if (onlySaved) savedArtists else savedArtists + artists.data.orEmpty().filter { it.id !in savedArtistIds }, key = { it.id }) { a ->
+                        ListRow(a.name, "Artist", { Cover(a.coverArt, 120, Modifier.size(56.dp), CircleShape) }, { mark(Kind.Artist, a.id, a.id in savedArtistIds) }) { nav.go(Route.Open(Kind.Artist, a.id)) }
                     }
                 }
                 else -> {
-                    val tiles = pinnedTiles(pins)
-                    if (tiles.isEmpty()) item("none") {
+                    val tiles = pinnedTiles(pins).filter { !onlySaved || saved(it.kind, it.id) }
+                    if (tiles.isEmpty() && onlySaved) emptySaved()
+                    else if (tiles.isEmpty()) item("none") {
                         Text("Tap the download button on a playlist or album to keep it on this phone.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 24.dp))
                     }
                     items(tiles, key = { "${it.kind}:${it.id}" }) { t ->
-                        ListRow(t.title, t.subtitle, { TileCover(t.kind, t.id, t.coverArt, t.mix, Modifier.size(56.dp), 120) }, { DownloadedMark() }) { nav.open(t) }
+                        ListRow(t.title, t.subtitle, { TileCover(t.kind, t.id, t.coverArt, t.mix, Modifier.size(56.dp), 120) }, { mark(t.kind, t.id, t.kind != Kind.Liked && saved(t.kind, t.id)) }) { nav.open(t) }
                     }
                 }
             }
