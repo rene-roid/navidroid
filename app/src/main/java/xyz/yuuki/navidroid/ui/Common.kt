@@ -117,7 +117,11 @@ class Nav {
         if (stack.size > 1) stack.removeAt(stack.lastIndex)
     }
 
+    /** Bumped when the tab the user is already on gets tapped again. */
+    var retap by androidx.compose.runtime.mutableIntStateOf(0)
+
     fun tab(r: Route) {
+        if (stack.toList() == listOf(r)) retap++
         stack.clear()
         stack.add(r)
     }

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -71,6 +72,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -228,6 +231,13 @@ fun SearchScreen() {
         result = runCatching { api.search(q.trim()) }.getOrNull()
     }
     val genres = rememberLoad("genres") { api.genres() }
+    // Tapping the Search tab again jumps into the search box.
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val retapAtOpen = remember { nav.retap }
+    LaunchedEffect(nav.retap) {
+        if (nav.retap != retapAtOpen) { focus.requestFocus(); keyboard?.show() }
+    }
 
     LazyVerticalGrid(GridCells.Fixed(2), Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item(span = { GridItemSpan(maxLineSpan) }) {
@@ -241,7 +251,7 @@ fun SearchScreen() {
                     Spacer(Modifier.width(10.dp))
                     Box(Modifier.weight(1f)) {
                         if (q.isEmpty()) Text("What do you want to listen to?", color = Color(0xFF6A6A6A), style = MaterialTheme.typography.bodyLarge)
-                        BasicTextField(q, { q = it }, singleLine = true, textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.Black), cursorBrush = SolidColor(Color.Black), modifier = Modifier.fillMaxWidth())
+                        BasicTextField(q, { q = it }, singleLine = true, textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.Black), cursorBrush = SolidColor(Color.Black), modifier = Modifier.fillMaxWidth().focusRequester(focus))
                     }
                     if (q.isNotEmpty()) IconButton({ q = "" }) { Icon(Icons.Rounded.Close, "Clear", tint = Color.Black) }
                 }
@@ -250,15 +260,12 @@ fun SearchScreen() {
         val r = result
         if (q.isBlank()) {
             item(span = { GridItemSpan(maxLineSpan) }) { Text("Browse all", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp)) }
-            items(genres.data.orEmpty().take(60), key = { it.name }) { g ->
-                Box(
-                    Modifier.height(96.dp).clip(RoundedCornerShape(6.dp)).background(Color(xyz.yuuki.navidroid.paletteColor(g.name)))
-                        .clickable { nav.go(Route.Open(Kind.Genre, g.name)) }.padding(12.dp),
-                ) {
-                    Text(g.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.W800, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                }
-            }
-        } else if (r != null) {
+            items(genres.data.orEmpty().take(60), key = { it.name }) { GenreCard(it) }
+        } else {
+            val matches = genres.data.orEmpty().filter { it.name.contains(q.trim(), ignoreCase = true) }.take(6)
+            items(matches, key = { "g" + it.name }) { GenreCard(it) }
+        }
+        if (q.isNotBlank() && r != null) {
             items(r.artists, key = { "ar" + it.id }, span = { GridItemSpan(maxLineSpan) }) { a ->
                 ListRow(a.name, "Artist", { Cover(a.coverArt, 120, Modifier.size(52.dp), CircleShape) }) { nav.go(Route.Open(Kind.Artist, a.id)) }
             }
@@ -270,6 +277,19 @@ fun SearchScreen() {
             }
         }
         item(span = { GridItemSpan(maxLineSpan) }) { BottomSpacer() }
+    }
+}
+
+@Composable
+private fun GenreCard(g: xyz.yuuki.navidroid.Genre) {
+    val nav = LocalNav.current
+    Box(
+        Modifier.height(96.dp).clip(RoundedCornerShape(6.dp)).background(Color(xyz.yuuki.navidroid.paletteColor(g.name)))
+            .clickable { nav.go(Route.Open(Kind.Genre, g.name)) }.padding(12.dp),
+    ) {
+        val art by androidx.compose.runtime.produceState<String?>(null, g.name) { value = runCatching { api.genreCover(g.name) }.getOrNull() }
+        if (art != null) Cover(art, 200, Modifier.align(Alignment.BottomEnd).offset(x = 22.dp, y = 10.dp).size(68.dp).rotate(25f))
+        Text(g.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.W800, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(end = 40.dp))
     }
 }
 

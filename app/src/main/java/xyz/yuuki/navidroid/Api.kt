@@ -415,6 +415,12 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
             .sortedByDescending { it.songCount }
     }
 
+    /** Art for a genre card: the first album the server lists for it. */
+    suspend fun genreCover(name: String): String? = once("genreCover:$name") {
+        call("getAlbumList2", "type" to "byGenre", "genre" to name, "size" to 1).getJSONObject("albumList2").list("album")
+            .firstOrNull()?.let(Album::from)?.coverArt ?: ""
+    }.ifEmpty { null }
+
     suspend fun lyrics(id: String): Lyrics? = once("lyrics:$id") {
         val list = call("getLyricsBySongId", "id" to id).optJSONObject("lyricsList")?.list("structuredLyrics").orEmpty()
         val pick = list.firstOrNull { it.optBoolean("synced") } ?: list.firstOrNull()
