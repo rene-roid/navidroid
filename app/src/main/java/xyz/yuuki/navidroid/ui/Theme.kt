@@ -12,7 +12,6 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import xyz.yuuki.navidroid.R
 
@@ -25,9 +24,6 @@ val Green = Color(0xFF1DB954)
 val GreenLight = Color(0xFF1ED760)
 val Sub = Color(0xFFB3B3B3)
 val Faint = Color(0xFF7A7A7A)
-
-/** Room at the bottom of every list for the mini player and the tab bar. */
-val BottomSpace = 150.dp
 
 private fun figtree(weight: Int) = Font(R.font.figtree, FontWeight(weight), variationSettings = FontVariation.Settings(FontVariation.weight(weight)))
 

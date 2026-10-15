@@ -141,7 +141,7 @@ fun HomeScreen() {
                 }
             }
             if (home.data == null && home.loading) item("loading") { Loading() }
-            item("end") { Spacer(Modifier.height(BottomSpace)) }
+            item("end") { BottomSpacer() }
         }
     }
 }
@@ -194,7 +194,7 @@ fun MoreScreen(key: String) {
     LazyVerticalGrid(GridCells.Adaptive(160.dp), Modifier.fillMaxSize(), contentPadding = PaddingValues(10.dp)) {
         item(span = { GridItemSpan(maxLineSpan) }) { BackTitle(section?.title ?: "") }
         items(section?.tiles.orEmpty(), key = { "${it.kind}:${it.id}" }) { Card(it, width = 200.dp) }
-        item(span = { GridItemSpan(maxLineSpan) }) { Spacer(Modifier.height(BottomSpace)) }
+        item(span = { GridItemSpan(maxLineSpan) }) { BottomSpacer() }
     }
 }
 
@@ -260,7 +260,7 @@ fun SearchScreen() {
                 TrackRow(s, { player?.play(listOf(s), from = "Search") })
             }
         }
-        item(span = { GridItemSpan(maxLineSpan) }) { Spacer(Modifier.height(BottomSpace)) }
+        item(span = { GridItemSpan(maxLineSpan) }) { BottomSpacer() }
     }
 }
 
@@ -306,74 +306,74 @@ fun LibraryScreen() {
             }
     }
 
-    LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(horizontal = 16.dp)) {
-        item("head") {
-            Column(Modifier.statusBarsPadding()) {
-                Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(34.dp).clip(CircleShape).background(Color(0xFFE1118C)).clickable { nav.go(Route.Settings) }, contentAlignment = Alignment.Center) {
-                        Text(displayName().take(1), fontWeight = FontWeight.W800)
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Text("Your Library", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
-                    IconButton({ nav.go(Route.Downloads) }) { Icon(Icons.Rounded.DownloadForOffline, "Downloads") }
+    Column(Modifier.fillMaxSize()) {
+        Column(Modifier.statusBarsPadding().padding(horizontal = 16.dp)) {
+            Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(34.dp).clip(CircleShape).background(Color(0xFFE1118C)).clickable { nav.go(Route.Settings) }, contentAlignment = Alignment.Center) {
+                    Text(displayName().take(1), fontWeight = FontWeight.W800)
                 }
-                Row(Modifier.padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("Playlists", "Albums", "Artists", "Downloaded").forEach { t ->
-                        FilterChip(
-                            tab == t, { tab = t }, { Text(t) }, shape = RoundedCornerShape(32.dp), border = null,
-                            colors = FilterChipDefaults.filterChipColors(
-                                containerColor = Tile, labelColor = Color.White,
-                                selectedContainerColor = Green, selectedLabelColor = Color.Black,
-                            ),
-                        )
-                    }
+                Spacer(Modifier.width(12.dp))
+                Text("Your Library", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
+                IconButton({ nav.go(Route.Downloads) }) { Icon(Icons.Rounded.DownloadForOffline, "Downloads") }
+            }
+            Row(Modifier.padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Playlists", "Albums", "Artists", "Downloaded").forEach { t ->
+                    FilterChip(
+                        tab == t, { tab = t }, { Text(t) }, shape = RoundedCornerShape(32.dp), border = null,
+                        colors = FilterChipDefaults.filterChipColors(
+                            containerColor = Tile, labelColor = Color.White,
+                            selectedContainerColor = Green, selectedLabelColor = Color.Black,
+                        ),
+                    )
                 }
             }
         }
-        val pinnedIds = pins.map { "${it.kind}:${it.id}" }.toSet()
-        @Composable
-        fun mark(kind: Kind, id: String, saved: Boolean = false) {
-            if (saved) FavoriteMark()
-            if ("$kind:$id" in pinnedIds) DownloadedMark()
-        }
-        // Saved items first; the server list is refreshed on every visit, overrides cover the gap.
-        val savedAlbums = starred.data?.list("album").orEmpty().map(xyz.yuuki.navidroid.Album::from).filter { Likes.isLiked(it.id, true) }
-        val savedArtists = starred.data?.list("artist").orEmpty().map(xyz.yuuki.navidroid.Artist::from).filter { Likes.isLiked(it.id, true) }
-        when (tab) {
-            "Playlists" -> {
-                item("liked") {
-                    ListRow("Liked Songs", "Playlist", { LikedCover(Modifier.size(56.dp)) }, { mark(Kind.Liked, "liked") }) { nav.go(Route.Open(Kind.Liked, "liked")) }
+        LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(horizontal = 16.dp)) {
+            val pinnedIds = pins.map { "${it.kind}:${it.id}" }.toSet()
+            @Composable
+            fun mark(kind: Kind, id: String, saved: Boolean = false) {
+                if (saved) FavoriteMark()
+                if ("$kind:$id" in pinnedIds) DownloadedMark()
+            }
+            // Saved items first; the server list is refreshed on every visit, overrides cover the gap.
+            val savedAlbums = starred.data?.list("album").orEmpty().map(xyz.yuuki.navidroid.Album::from).filter { Likes.isLiked(it.id, true) }
+            val savedArtists = starred.data?.list("artist").orEmpty().map(xyz.yuuki.navidroid.Artist::from).filter { Likes.isLiked(it.id, true) }
+            when (tab) {
+                "Playlists" -> {
+                    item("liked") {
+                        ListRow("Liked Songs", "Playlist", { LikedCover(Modifier.size(56.dp)) }, { mark(Kind.Liked, "liked") }) { nav.go(Route.Open(Kind.Liked, "liked")) }
+                    }
+                    items(playlists.data.orEmpty().sortedWith(compareBy({ it.id !in Likes.playlists }, { it.mix != null })), key = { it.id }) { p ->
+                        val t = p.tile()
+                        ListRow(t.title, if (p.mix != null) "Mix • ${p.mix.by}" else "Playlist • ${p.owner}", { TileCover(Kind.Playlist, p.id, p.coverArt, p.mix, Modifier.size(56.dp), 120) }, { mark(Kind.Playlist, p.id, p.id in Likes.playlists) }) {
+                            nav.open(t)
+                        }
+                    }
                 }
-                items(playlists.data.orEmpty().sortedWith(compareBy({ it.id !in Likes.playlists }, { it.mix != null })), key = { it.id }) { p ->
-                    val t = p.tile()
-                    ListRow(t.title, if (p.mix != null) "Mix • ${p.mix.by}" else "Playlist • ${p.owner}", { TileCover(Kind.Playlist, p.id, p.coverArt, p.mix, Modifier.size(56.dp), 120) }, { mark(Kind.Playlist, p.id, p.id in Likes.playlists) }) {
-                        nav.open(t)
+                "Albums" -> {
+                    val ids = savedAlbums.map { it.id }.toSet()
+                    items(savedAlbums + albums.filter { it.id !in ids }, key = { it.id }) { a ->
+                        ListRow(a.name, "Album • ${a.artist}", { Cover(a.coverArt, 120, Modifier.size(56.dp)) }, { mark(Kind.Album, a.id, a.id in ids) }) { nav.go(Route.Open(Kind.Album, a.id)) }
+                    }
+                }
+                "Artists" -> {
+                    val ids = savedArtists.map { it.id }.toSet()
+                    items(savedArtists + artists.data.orEmpty().filter { it.id !in ids }, key = { it.id }) { a ->
+                        ListRow(a.name, "Artist", { Cover(a.coverArt, 120, Modifier.size(56.dp), CircleShape) }, { mark(Kind.Artist, a.id, a.id in ids) }) { nav.go(Route.Open(Kind.Artist, a.id)) }
+                    }
+                }
+                else -> {
+                    val tiles = pinnedTiles(pins)
+                    if (tiles.isEmpty()) item("none") {
+                        Text("Tap the download button on a playlist or album to keep it on this phone.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 24.dp))
+                    }
+                    items(tiles, key = { "${it.kind}:${it.id}" }) { t ->
+                        ListRow(t.title, t.subtitle, { TileCover(t.kind, t.id, t.coverArt, t.mix, Modifier.size(56.dp), 120) }, { DownloadedMark() }) { nav.open(t) }
                     }
                 }
             }
-            "Albums" -> {
-                val ids = savedAlbums.map { it.id }.toSet()
-                items(savedAlbums + albums.filter { it.id !in ids }, key = { it.id }) { a ->
-                    ListRow(a.name, "Album • ${a.artist}", { Cover(a.coverArt, 120, Modifier.size(56.dp)) }, { mark(Kind.Album, a.id, a.id in ids) }) { nav.go(Route.Open(Kind.Album, a.id)) }
-                }
-            }
-            "Artists" -> {
-                val ids = savedArtists.map { it.id }.toSet()
-                items(savedArtists + artists.data.orEmpty().filter { it.id !in ids }, key = { it.id }) { a ->
-                    ListRow(a.name, "Artist", { Cover(a.coverArt, 120, Modifier.size(56.dp), CircleShape) }, { mark(Kind.Artist, a.id, a.id in ids) }) { nav.go(Route.Open(Kind.Artist, a.id)) }
-                }
-            }
-            else -> {
-                val tiles = pinnedTiles(pins)
-                if (tiles.isEmpty()) item("none") {
-                    Text("Tap the download button on a playlist or album to keep it on this phone.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 24.dp))
-                }
-                items(tiles, key = { "${it.kind}:${it.id}" }) { t ->
-                    ListRow(t.title, t.subtitle, { TileCover(t.kind, t.id, t.coverArt, t.mix, Modifier.size(56.dp), 120) }, { DownloadedMark() }) { nav.open(t) }
-                }
-            }
+            item("end") { BottomSpacer() }
         }
-        item("end") { Spacer(Modifier.height(BottomSpace)) }
     }
 }
 
@@ -442,7 +442,7 @@ fun CollectionScreen(kind: Kind, id: String) {
             if (c != null) itemsIndexed(c.songs, key = { i, s -> "$i:${s.id}" }) { i, s ->
                 TrackRow(s, { player?.play(c.songs, i, from = c.title) }, number = if (kind == Kind.Album) s.track.takeIf { it > 0 } ?: (i + 1) else null, showArt = kind != Kind.Album)
             }
-            item("end") { Spacer(Modifier.height(BottomSpace)) }
+            item("end") { BottomSpacer() }
         }
         TopBar(c?.title ?: "", color, collapsed)
     }
@@ -538,7 +538,7 @@ fun ArtistScreen(id: String) {
                     }
                 }
             }
-            item("end") { Spacer(Modifier.height(BottomSpace)) }
+            item("end") { BottomSpacer() }
         }
         TopBar(a?.artist?.name ?: "", color, collapsed)
     }

@@ -282,7 +282,7 @@ fun SettingsScreen(onLogout: () -> Unit) {
                 ctx.imageLoader.diskCache?.clear()
             })
         }
-        item { Spacer(Modifier.height(BottomSpace)) }
+        item { BottomSpacer() }
     }
 }
 
@@ -388,7 +388,7 @@ fun DownloadsScreen() {
             HorizontalDivider(Modifier.padding(top = 24.dp), color = Elevated)
             TextButton({ confirmClear = true }, Modifier.padding(8.dp)) { Text("Remove all downloads", color = Color(0xFFF15E6C)) }
         }
-        item { Spacer(Modifier.height(BottomSpace)) }
+        item { BottomSpacer() }
     }
     if (confirmClear) androidx.compose.material3.AlertDialog(
         onDismissRequest = { confirmClear = false },

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -317,6 +318,10 @@ fun TileCover(kind: Kind, id: String, coverArt: String?, mix: Mix?, modifier: Mo
 }
 
 // ---- building blocks ------------------------------------------------------------------------
+
+/** Room at the end of every list for the mini player, the tab bar and the system navigation bar. */
+@Composable
+fun BottomSpacer() = Spacer(Modifier.navigationBarsPadding().height(150.dp))
 
 @Composable
 fun Card(t: Tile, width: Dp = 150.dp, modifier: Modifier = Modifier) {
