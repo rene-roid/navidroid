@@ -4,6 +4,8 @@ import android.content.Context
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -170,7 +172,7 @@ class Prefs(ctx: Context) {
     var salt by str("salt")
     var streamBitrateWifi by int("streamWifi", 0)
     var streamBitrateMobile by int("streamMobile", 192)
-    var downloadBitrate by int("downloadBitrate", 0)
+    var downloadBitrate by int("downloadBitrate", 128)
     var wifiOnlyDownloads by bool("wifiOnly", true)
     var lastSync by long("lastSync")
 
@@ -272,6 +274,26 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
         "stream",
         if (maxBitRate > 0) listOf("id" to id, "maxBitRate" to maxBitRate, "estimateContentLength" to true) else listOf("id" to id),
     )
+
+    /**
+     * Opus, about half the size of MP3 at the same quality. No length estimate: a variable-bitrate
+     * stream can outgrow it and get cut short, and the cache records the real length anyway.
+     */
+    fun downloadUrl(id: String, maxBitRate: Int) =
+        url("stream", if (maxBitRate > 0) listOf("id" to id, "maxBitRate" to maxBitRate, "format" to "opus") else listOf("id" to id))
+
+    private var reconnecting: Job? = null
+
+    /** Races the endpoints, retrying for a few seconds: a network that just came up often can't route yet. */
+    fun reconnect() {
+        reconnecting?.cancel()
+        reconnecting = scope.launch {
+            for (wait in listOf(0L, 1_000, 2_000, 4_000, 8_000)) {
+                delay(wait)
+                if (pickFastest() != null) return@launch
+            }
+        }
+    }
 
     /** Pings every endpoint at once and switches to the first that answers. Concurrent callers share one race. */
     suspend fun pickFastest(): String? {
@@ -448,6 +470,8 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
     /** Network went away or came back; forget the fail-fast window so the next call tries again. */
     fun networkChanged(available: Boolean) {
         lastFailedRace = 0
+        // Pooled connections belong to the old network and would hang until they time out.
+        http.connectionPool.evictAll()
         if (!available) online.value = false
     }
 

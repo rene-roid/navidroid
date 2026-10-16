@@ -358,7 +358,7 @@ fun SettingsScreen(onLogout: () -> Unit) {
         item { QualityRow("On mobile data", mobile) { mobile = it; prefs.streamBitrateMobile = it } }
 
         item { Group("Downloads") }
-        item { QualityRow("Download quality", dl) { dl = it; prefs.downloadBitrate = it } }
+        item { QualityRow("Download quality", dl) { dl = it; prefs.downloadBitrate = it; app.offline.sync() } }
         item {
             SettingRow("Download on Wi-Fi only", "Pinned playlists wait for Wi-Fi") {
                 Switch(wifiOnly, { wifiOnly = it; app.offline.setWifiOnly(it) }, colors = SwitchDefaults.colors(checkedTrackColor = Green))

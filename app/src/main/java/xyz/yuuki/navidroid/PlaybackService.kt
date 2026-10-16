@@ -1,6 +1,7 @@
 package xyz.yuuki.navidroid
 
 import android.app.PendingIntent
+import android.graphics.Bitmap
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -11,11 +12,22 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.util.BitmapLoader
+import androidx.media3.datasource.DataSourceBitmapLoader
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.session.CacheBitmapLoader
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import coil3.imageLoader
+import coil3.request.ImageRequest
+import coil3.request.SuccessResult
+import coil3.request.allowHardware
+import coil3.toBitmap
 import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
+import com.google.common.util.concurrent.SettableFuture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
@@ -26,7 +38,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import xyz.yuuki.navidroid.ui.coverRequest
 import java.io.File
+import java.io.IOException
 
 fun Song.toMediaItem(): MediaItem {
     val app = App.it
@@ -62,6 +76,8 @@ class PlaybackService : MediaSessionService() {
         val app = application as App
         val player = ExoPlayer.Builder(this)
             .setMediaSourceFactory(DefaultMediaSourceFactory(app.offline.playback))
+            // Start after half a second of audio instead of 2.5 s; songs are cached or preloaded most of the time.
+            .setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(50_000, 50_000, 500, 2_000).build())
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_NETWORK)
@@ -75,6 +91,13 @@ class PlaybackService : MediaSessionService() {
                 saveQueue(player)
             }
 
+            override fun onEvents(p: Player, events: Player.Events) {
+                if (events.containsAny(Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_TIMELINE_CHANGED, Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED, Player.EVENT_REPEAT_MODE_CHANGED)) {
+                    val next = player.nextMediaItemIndex
+                    if (next != C.INDEX_UNSET) app.offline.preload(player.getMediaItemAt(next).song)
+                }
+            }
+
             // A dead endpoint mid-song: switch to the next one and carry on from the same spot.
             override fun onPlayerError(error: PlaybackException) {
                 if (retries++ >= 3) return
@@ -86,7 +109,13 @@ class PlaybackService : MediaSessionService() {
             }
         })
 
+        // Stopped on a network error: carry on as soon as an endpoint answers again.
+        scope.launch {
+            app.api.online.collect { if (it && player.playerError != null) player.prepare() }
+        }
+
         session = MediaSession.Builder(this, player)
+            .setBitmapLoader(CacheBitmapLoader(CoverLoader(app)))
             .setSessionActivity(
                 PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE),
             )
@@ -144,6 +173,31 @@ class PlaybackService : MediaSessionService() {
             player.playlistMetadata = MediaMetadata.Builder().setTitle(o.s("from")).build()
             player.prepare()
         }
+    }
+}
+
+/**
+ * Notification and lock screen art through Coil, so it shares the app's disk cache and the
+ * downloaded covers, and still loads after the endpoint baked into the artwork URL went away.
+ */
+private class CoverLoader(private val app: App) : BitmapLoader {
+    private val fallback = DataSourceBitmapLoader.Builder(app).build()
+
+    override fun supportsMimeType(mimeType: String) = fallback.supportsMimeType(mimeType)
+
+    override fun decodeBitmap(data: ByteArray) = fallback.decodeBitmap(data)
+
+    override fun loadBitmap(uri: Uri): ListenableFuture<Bitmap> {
+        val id = uri.getQueryParameter("id")?.takeIf { uri.path?.endsWith("/getCoverArt") == true }
+        val req = (if (id != null) coverRequest(app, id, 600).memoryCacheKey("notif:$id") else ImageRequest.Builder(app).data(uri))
+            .allowHardware(false)
+            .build()
+        val f = SettableFuture.create<Bitmap>()
+        app.scope.launch {
+            val bmp = (app.imageLoader.execute(req) as? SuccessResult)?.image?.toBitmap()
+            if (bmp != null) f.set(bmp) else f.setException(IOException("No cover for $uri"))
+        }
+        return f
     }
 }
 

@@ -543,13 +543,14 @@ private val MIX_SECTIONS = listOf(
 @Composable
 fun CollectionScreen(kind: Kind, id: String) {
     val player = LocalPlayer.current
-    val nav = LocalNav.current
     val load = rememberLoad("c:$kind:$id") { api.collection(kind, id) }
     val c = load.data
+    LaunchedEffect(c) { c?.let { App.it.offline.warm(it.songs) } }
     val color = c?.mix?.let { Color(it.color) }
         ?: if (kind == Kind.Liked) Color(0xFF5038A0) else if (kind == Kind.Genre) Color(xyz.yuuki.navidroid.paletteColor(id)) else rememberCoverColor(c?.coverArt)
     val list = rememberLazyListState()
     val collapsed by remember { derivedStateOf { list.firstVisibleItemIndex > 0 || list.firstVisibleItemScrollOffset > 600 } }
+    val wide = isWide()
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), state = list) {
@@ -557,28 +558,14 @@ fun CollectionScreen(kind: Kind, id: String) {
                 Column(
                     Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(color, Bg))).statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp),
                 ) {
-                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        TileCover(kind, id, c?.coverArt, c?.mix, Modifier.size(240.dp).shadow(20.dp, RoundedCornerShape(6.dp)), 600)
-                    }
-                    Spacer(Modifier.height(20.dp))
-                    Text(c?.title ?: "", style = MaterialTheme.typography.headlineMedium)
-                    c?.description?.let { Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp), maxLines = 3, overflow = TextOverflow.Ellipsis) }
-                    if (c != null) Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        c.by?.let { by ->
-                            Text(
-                                by, style = MaterialTheme.typography.labelLarge,
-                                modifier = Modifier.clickable(enabled = c.artistId != null) { nav.go(Route.Open(Kind.Artist, c.artistId!!)) },
-                            )
-                            Text("  •  ", style = MaterialTheme.typography.bodySmall)
-                        }
-                        Text(
-                            listOfNotNull(
-                                when (kind) { Kind.Album -> "Album"; else -> if (c.mix != null) "Made For You" else "Playlist" },
-                                c.year.takeIf { it > 0 }?.toString(),
-                                "${c.songs.size} songs, ${formatLength(c.duration)}",
-                            ).joinToString(" • "),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
+                    val cover = @Composable { TileCover(kind, id, c?.coverArt, c?.mix, Modifier.size(if (wide) 160.dp else 240.dp).shadow(20.dp, RoundedCornerShape(6.dp)), 600) }
+                    if (wide) Row(verticalAlignment = Alignment.Bottom) {
+                        cover()
+                        Column(Modifier.padding(start = 20.dp)) { CollectionInfo(kind, c) }
+                    } else {
+                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { cover() }
+                        Spacer(Modifier.height(20.dp))
+                        CollectionInfo(kind, c)
                     }
                 }
             }
@@ -606,6 +593,30 @@ fun CollectionScreen(kind: Kind, id: String) {
             item("end") { BottomSpacer() }
         }
         TopBar(c?.title ?: "", color, collapsed)
+    }
+}
+
+@Composable
+private fun CollectionInfo(kind: Kind, c: Collection?) {
+    val nav = LocalNav.current
+    Text(c?.title ?: "", style = MaterialTheme.typography.headlineMedium)
+    c?.description?.let { Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp), maxLines = 3, overflow = TextOverflow.Ellipsis) }
+    if (c != null) Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        c.by?.let { by ->
+            Text(
+                by, style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.clickable(enabled = c.artistId != null) { nav.go(Route.Open(Kind.Artist, c.artistId!!)) },
+            )
+            Text("  •  ", style = MaterialTheme.typography.bodySmall)
+        }
+        Text(
+            listOfNotNull(
+                when (kind) { Kind.Album -> "Album"; else -> if (c.mix != null) "Made For You" else "Playlist" },
+                c.year.takeIf { it > 0 }?.toString(),
+                "${c.songs.size} songs, ${formatLength(c.duration)}",
+            ).joinToString(" • "),
+            style = MaterialTheme.typography.bodySmall,
+        )
     }
 }
 
@@ -662,7 +673,7 @@ fun ArtistScreen(id: String) {
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), state = list) {
             item("header") {
-                Box(Modifier.fillMaxWidth().height(340.dp)) {
+                Box(Modifier.fillMaxWidth().height(if (isWide()) 220.dp else 340.dp)) {
                     Cover(image, 600, Modifier.fillMaxSize(), RoundedCornerShape(0.dp))
                     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Transparent, .55f to Color.Transparent, 1f to Bg)))
                     Text(

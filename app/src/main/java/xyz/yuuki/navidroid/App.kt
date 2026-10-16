@@ -14,7 +14,6 @@ import coil3.request.crossfade
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 
 class App : Application(), SingletonImageLoader.Factory {
     companion object {
@@ -32,13 +31,13 @@ class App : Application(), SingletonImageLoader.Factory {
         it = this
         prefs = Prefs(this)
         api = Api(prefs, scope)
-        if (prefs.loggedIn) scope.launch { api.pickFastest() }
+        if (prefs.loggedIn) api.reconnect()
 
         // Re-race the endpoints whenever the network changes (home Wi-Fi <-> mobile data).
         getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
                 api.networkChanged(true)
-                if (prefs.loggedIn) scope.launch { api.pickFastest() }
+                if (prefs.loggedIn) api.reconnect()
             }
 
             override fun onLost(network: Network) = api.networkChanged(false)

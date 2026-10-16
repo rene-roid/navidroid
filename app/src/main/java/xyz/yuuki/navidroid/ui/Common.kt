@@ -70,6 +70,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -322,6 +323,10 @@ fun TileCover(kind: Kind, id: String, coverArt: String?, mix: Mix?, modifier: Mo
 }
 
 // ---- building blocks ------------------------------------------------------------------------
+
+/** Landscape: screens split into two sides instead of stretching the portrait layout. */
+@Composable
+fun isWide() = LocalConfiguration.current.run { screenWidthDp > screenHeightDp }
 
 /** Room at the end of every list for the mini player, the tab bar and the system navigation bar. */
 @Composable

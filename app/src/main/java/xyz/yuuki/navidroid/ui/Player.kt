@@ -12,7 +12,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,6 +28,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -57,11 +63,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -72,6 +83,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.sp
@@ -204,50 +216,49 @@ fun MiniPlayer(p: PlayerState, onOpen: () -> Unit) {
     }
 }
 
+/**
+ * Full-screen player in portrait. [docked] is the landscape side panel that stays open while something plays:
+ * the cover fills it with the controls laid over, and lyrics and the queue scroll in below.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
+fun NowPlaying(p: PlayerState, docked: Boolean = false, onClose: () -> Unit = {}) {
     val song = p.song ?: return
     val nav = LocalNav.current
     val color = rememberCoverColor(song.coverArt)
     val lyrics = rememberLoad("lyrics:${song.id}") { App.it.api.lyrics(song.id) }
     val pos = rememberPosition(p, 200)
-    val pull = rememberPullToClose(onClose)
+    val pull = if (docked) Modifier else rememberPullToClose(onClose)
 
     Box(Modifier.fillMaxSize().then(pull).background(Bg).background(Brush.verticalGradient(listOf(color, lerp(color, Bg, .6f), Bg)))) {
-        LazyColumn(Modifier.fillMaxSize().statusBarsPadding()) {
-            item("top") {
-                Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClose) { Icon(Icons.Rounded.KeyboardArrowDown, "Close", Modifier.size(32.dp)) }
-                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("PLAYING FROM", style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp, color = Color.White.copy(alpha = .8f))
-                        Text(p.from ?: song.album, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    SongMenu(song, Color.White)
-                }
-            }
-            item("art") { SwipeArt(p, song) }
-            item("info") {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(song.title, style = MaterialTheme.typography.headlineSmall, maxLines = 1, modifier = Modifier.basicMarquee())
-                        Text(
-                            song.artist, style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = .7f), maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.clickable(enabled = song.artistId != null) {
-                                onClose()
-                                nav.go(Route.Open(Kind.Artist, song.artistId!!))
-                            },
-                        )
-                    }
-                    IconButton({ Likes.toggle(song) }) {
-                        val liked = Likes.isLiked(song)
-                        Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Like", Modifier.size(28.dp), tint = if (liked) Green else Color.White)
+        LazyColumn(
+            Modifier.fillMaxSize().then(
+                if (docked) Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.End))
+                else Modifier.statusBarsPadding(),
+            ),
+        ) {
+            if (docked) item("hero") { DockedHero(p, song, pos, color) }
+            else {
+                item("top") {
+                    Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClose) { Icon(Icons.Rounded.KeyboardArrowDown, "Close", Modifier.size(32.dp)) }
+                        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("PLAYING FROM", style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp, color = Color.White.copy(alpha = .8f))
+                            Text(p.from ?: song.album, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        SongMenu(song, Color.White)
                     }
                 }
+                item("art") { SwipeArt(p, song) }
+                item("info") {
+                    SongInfo(song) {
+                        onClose()
+                        nav.go(Route.Open(Kind.Artist, song.artistId!!))
+                    }
+                }
+                item("seek") { Seek(p, song, pos) }
+                item("controls") { Controls(p) }
             }
-            item("seek") { Seek(p, song, pos) }
-            item("controls") { Controls(p) }
             lyrics.data?.let { l -> item("lyrics") { LyricsCard(p, l, pos, color) } }
             if (p.upNext.isNotEmpty()) item("next") {
                 Text("Up next", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 24.dp, top = 28.dp, bottom = 8.dp))
@@ -270,6 +281,22 @@ fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
                 Spacer(Modifier.height(32.dp))
             }
         }
+    }
+}
+
+@Composable
+private fun SongInfo(song: Song, onArtist: () -> Unit) = Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+    Column(Modifier.weight(1f)) {
+        Text(song.title, style = MaterialTheme.typography.headlineSmall, maxLines = 1, modifier = Modifier.basicMarquee())
+        Text(
+            song.artist, style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = .7f), maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.clickable(enabled = song.artistId != null, onClick = onArtist),
+        )
+    }
+    IconButton({ Likes.toggle(song) }) {
+        val liked = Likes.isLiked(song)
+        Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Like", Modifier.size(28.dp), tint = if (liked) Green else Color.White)
     }
 }
 
@@ -343,13 +370,59 @@ private fun Modifier.swipeToSkip(p: PlayerState, song: Song): Modifier {
     }
 }
 
+/** Landscape player: the cover fills the panel, with the song and controls in a shaded bar along the bottom. */
+@Composable
+private fun LazyItemScope.DockedHero(p: PlayerState, song: Song, pos: Long, color: Color) {
+    val nav = LocalNav.current
+    val shade = lerp(color, Color.Black, .55f)
+    Box(Modifier.fillParentMaxSize()) {
+        Box(Modifier.fillMaxSize().swipeToSkip(p, song)) {
+            Cover(song.coverArt, 1000, Modifier.fillMaxSize(), RoundedCornerShape(0.dp))
+            // A blurred copy faded in towards the bottom, so the cover melts into the controls instead of meeting a hard edge.
+            Cover(
+                song.coverArt, 1000,
+                Modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    .drawWithContent {
+                        drawContent()
+                        drawRect(Brush.verticalGradient(.35f to Color.Transparent, .65f to Color.Black), blendMode = BlendMode.DstIn)
+                    }
+                    .blur(40.dp, BlurredEdgeTreatment.Rectangle),
+                RoundedCornerShape(0.dp),
+            )
+        }
+        // Keeps the status bar icons readable over bright covers.
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = .35f), .15f to Color.Transparent)))
+        // Soft seam against the app on the left.
+        Box(Modifier.fillMaxHeight().width(40.dp).background(Brush.horizontalGradient(listOf(Bg, Color.Transparent))))
+        Column(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                .background(Brush.verticalGradient(0f to Color.Transparent, .35f to shade.copy(alpha = .75f), 1f to shade.copy(alpha = .95f)))
+                .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom)).padding(top = 32.dp),
+        ) {
+            Row(Modifier.padding(start = 24.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(song.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.W700, maxLines = 1, modifier = Modifier.basicMarquee())
+                    Text(
+                        song.artist, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = .7f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.clickable(enabled = song.artistId != null) { nav.go(Route.Open(Kind.Artist, song.artistId!!)) },
+                    )
+                }
+                HeartButton(Likes.isLiked(song), 26.dp) { Likes.toggle(song) }
+                SongMenu(song, Color.White)
+            }
+            Seek(p, song, pos)
+            Controls(p, play = 56.dp)
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Seek(p: PlayerState, song: Song, pos: Long) {
+private fun Seek(p: PlayerState, song: Song, pos: Long, inset: Dp = 16.dp) {
     var dragging by remember { mutableStateOf<Float?>(null) }
     val dur = (p.c.duration.takeIf { it > 0 } ?: (song.duration * 1000L)).toFloat()
     val value = dragging ?: (pos / dur).coerceIn(0f, 1f)
-    Column(Modifier.padding(horizontal = 16.dp)) {
+    Column(Modifier.padding(horizontal = inset)) {
         Slider(
             value = value,
             onValueChange = { dragging = it },
@@ -374,25 +447,39 @@ private fun Seek(p: PlayerState, song: Song, pos: Long) {
 }
 
 @Composable
-private fun Controls(p: PlayerState) = Row(
-    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+private fun Controls(p: PlayerState, play: Dp = 68.dp, inset: Dp = 16.dp) = Row(
+    Modifier.fillMaxWidth().padding(horizontal = inset, vertical = 8.dp),
     horizontalArrangement = Arrangement.SpaceBetween,
     verticalAlignment = Alignment.CenterVertically,
 ) {
-    IconButton({ p.c.shuffleModeEnabled = !p.shuffle }) {
-        Icon(Icons.Rounded.Shuffle, "Shuffle", tint = if (p.shuffle) Green else Color.White)
-    }
-    IconButton({ p.c.seekToPrevious() }, Modifier.size(56.dp)) { Icon(Icons.Rounded.SkipPrevious, "Previous", Modifier.size(40.dp)) }
-    Box(Modifier.size(68.dp).clip(CircleShape).background(Color.White).clickable(onClick = p::toggle), contentAlignment = Alignment.Center) {
-        Icon(if (p.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/pause", Modifier.size(40.dp), tint = Color.Black)
-    }
-    IconButton({ p.c.seekToNext() }, Modifier.size(56.dp)) { Icon(Icons.Rounded.SkipNext, "Next", Modifier.size(40.dp)) }
-    IconButton(p::cycleRepeat) {
-        Icon(
-            if (p.repeat == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "Repeat",
-            tint = if (p.repeat == Player.REPEAT_MODE_OFF) Color.White else Green,
-        )
-    }
+    ShuffleButton(p)
+    SkipButton(p, next = false, 40.dp)
+    PlayPause(p, play)
+    SkipButton(p, next = true, 40.dp)
+    RepeatButton(p)
+}
+
+@Composable
+private fun ShuffleButton(p: PlayerState) = IconButton({ p.c.shuffleModeEnabled = !p.shuffle }) {
+    Icon(Icons.Rounded.Shuffle, "Shuffle", tint = if (p.shuffle) Green else Color.White)
+}
+
+@Composable
+private fun RepeatButton(p: PlayerState) = IconButton(p::cycleRepeat) {
+    Icon(
+        if (p.repeat == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "Repeat",
+        tint = if (p.repeat == Player.REPEAT_MODE_OFF) Color.White else Green,
+    )
+}
+
+@Composable
+private fun SkipButton(p: PlayerState, next: Boolean, icon: Dp) = IconButton({ if (next) p.c.seekToNext() else p.c.seekToPrevious() }, Modifier.size(56.dp)) {
+    Icon(if (next) Icons.Rounded.SkipNext else Icons.Rounded.SkipPrevious, if (next) "Next" else "Previous", Modifier.size(icon))
+}
+
+@Composable
+private fun PlayPause(p: PlayerState, size: Dp) = Box(Modifier.size(size).clip(CircleShape).background(Color.White).clickable(onClick = p::toggle), contentAlignment = Alignment.Center) {
+    Icon(if (p.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/pause", Modifier.size(size * .6f), tint = Color.Black)
 }
 
 @Composable

@@ -3,9 +3,12 @@ package xyz.yuuki.navidroid
 import android.app.Notification
 import android.net.Uri
 import androidx.media3.database.StandaloneDatabaseProvider
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.datasource.cache.CacheWriter
+import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.exoplayer.offline.Download
@@ -15,6 +18,7 @@ import androidx.media3.exoplayer.offline.DownloadRequest
 import androidx.media3.exoplayer.offline.DownloadService
 import androidx.media3.exoplayer.scheduler.Requirements
 import androidx.media3.exoplayer.scheduler.Scheduler
+import coil3.imageLoader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -29,11 +33,12 @@ import kotlinx.coroutines.withContext
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
+import xyz.yuuki.navidroid.ui.coverRequest
 import java.util.concurrent.Executors
 
 /** Song URIs are resolved against whichever endpoint is active when the bytes are actually fetched. */
-fun songUri(id: String, bitrate: Int? = null): Uri =
-    Uri.parse("navidroid://song/$id" + (bitrate?.let { "?br=$it" } ?: ""))
+fun songUri(id: String, downloadBitrate: Int? = null): Uri =
+    Uri.parse("navidroid://song/$id" + (downloadBitrate?.let { "?dl=$it" } ?: ""))
 
 data class Pin(val kind: Kind, val id: String) {
     override fun toString() = "$kind:$id"
@@ -52,6 +57,8 @@ data class Pin(val kind: Kind, val id: String) {
 class Offline(private val app: App) {
     private val db = StandaloneDatabaseProvider(app)
     val cache = SimpleCache(File(app.filesDir, "media"), NoOpCacheEvictor(), db)
+    /** Songs heard or preloaded while streaming; the oldest go first. */
+    private val streamCache = SimpleCache(File(app.cacheDir, "stream"), LeastRecentlyUsedCacheEvictor(1L shl 30), db)
     private val covers = File(app.filesDir, "covers").apply { mkdirs() }
     private val snapshots = File(app.filesDir, "collections").apply { mkdirs() }
 
@@ -61,15 +68,60 @@ class Offline(private val app: App) {
             .setReadTimeoutMs(20_000)
             .setAllowCrossProtocolRedirects(true),
     ) { spec ->
-        if (spec.uri.scheme != "navidroid") spec
-        else spec.withUri(Uri.parse(app.api.streamUrl(spec.uri.lastPathSegment!!, spec.uri.getQueryParameter("br")?.toInt() ?: app.streamBitrate)))
+        val u = spec.uri
+        if (u.scheme != "navidroid") spec
+        else spec.withUri(Uri.parse(
+            u.getQueryParameter("dl")?.let { app.api.downloadUrl(u.lastPathSegment!!, it.toInt()) }
+                ?: app.api.streamUrl(u.lastPathSegment!!, u.getQueryParameter("br")?.toInt() ?: app.streamBitrate),
+        ))
     }
 
-    /** Reads downloaded songs from disk, streams the rest. Streams are not written to the download cache. */
+    /** Keyed by bitrate too, so a song cached on mobile data doesn't stick at that quality on Wi-Fi. */
+    private val streamed = CacheDataSource.Factory()
+        .setCache(streamCache)
+        .setCacheKeyFactory { "${it.key ?: it.uri}@${app.streamBitrate}" }
+        .setUpstreamDataSourceFactory(upstream)
+
+    /** Reads downloaded songs from disk, then songs already streamed or preloaded, and streams the rest. */
     val playback: CacheDataSource.Factory = CacheDataSource.Factory()
         .setCache(cache)
-        .setUpstreamDataSourceFactory(upstream)
+        .setUpstreamDataSourceFactory(streamed)
         .setCacheWriteDataSinkFactory(null)
+
+    private var preloading: Pair<String, CacheWriter>? = null
+
+    /** Fetches [song] into the stream cache in the background, so skipping to it starts instantly, even offline. */
+    fun preload(song: Song?) {
+        if (song == null || song.id == preloading?.first || isDownloaded(song.id)) return
+        preloading?.second?.cancel()
+        val writer = CacheWriter(streamed.createDataSource(), DataSpec.Builder().setUri(songUri(song.id)).setKey(song.id).build(), null, null)
+        preloading = song.id to writer
+        app.scope.launch(Dispatchers.IO) { runCatching { writer.cache() } }
+        // The notification, mini player and full player covers.
+        for (size in listOf(120, 600, 1000)) song.coverArt?.let { app.imageLoader.enqueue(coverRequest(app, it, size).build()) }
+    }
+
+    @Volatile private var warming: CacheWriter? = null
+    @Volatile private var warmGen = 0
+
+    /**
+     * Caches the opening of the first few [songs] of a screen the user just opened, so tapping one
+     * plays at once while the rest streams in behind it.
+     */
+    // ponytail: first 5 songs, 512 KB each (~30 s at 128 kbps); warm around the scroll position if people tap deeper.
+    fun warm(songs: List<Song>) {
+        val gen = ++warmGen
+        warming?.cancel()
+        val todo = songs.take(5).filterNot { isDownloaded(it.id) }
+        app.scope.launch(Dispatchers.IO) {
+            for (s in todo) {
+                val w = CacheWriter(streamed.createDataSource(), DataSpec.Builder().setUri(songUri(s.id)).setKey(s.id).setLength(512 * 1024).build(), null, null)
+                warming = w
+                if (gen != warmGen) return@launch
+                runCatching { w.cache() }
+            }
+        }
+    }
 
     val manager = DownloadManager(app, db, cache, upstream, Executors.newFixedThreadPool(4)).apply {
         maxParallelDownloads = 4
@@ -173,14 +225,22 @@ class Offline(private val app: App) {
         collections.forEach { c -> c.songs.forEach { want.putIfAbsent(it.id, it) } }
 
         ready.await()
+        val br = app.prefs.downloadBitrate
+        // Downloaded at another quality: fetch again so the setting applies to songs already on the phone.
+        val stale = want.keys.filter { id ->
+            manager.downloadIndex.getDownload(id)?.takeIf { it.state == Download.STATE_COMPLETED }
+                ?.let { JSONObject(String(it.request.data)).optInt("br") != br } == true
+        }.toSet()
         withContext(Dispatchers.Main) {
             val have = states.value
             for (song in want.values) {
                 val s = have[song.id]
-                if (s == null || s == Download.STATE_FAILED) {
-                    val req = DownloadRequest.Builder(song.id, songUri(song.id, app.prefs.downloadBitrate))
+                if (s == null || s == Download.STATE_FAILED || song.id in stale) {
+                    // Removing first makes the manager wipe the old bytes before downloading again.
+                    if (song.id in stale) DownloadService.sendRemoveDownload(app, DownloadSvc::class.java, song.id, false)
+                    val req = DownloadRequest.Builder(song.id, songUri(song.id, br))
                         .setCustomCacheKey(song.id)
-                        .setData(song.toJson().toString().toByteArray())
+                        .setData(song.toJson().put("br", br).toString().toByteArray())
                         .build()
                     DownloadService.sendAddDownload(app, DownloadSvc::class.java, req, false)
                 }
