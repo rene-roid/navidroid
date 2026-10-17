@@ -247,7 +247,7 @@ private fun SettingRow(title: String, subtitle: String? = null, onClick: (() -> 
     trailing()
 }
 
-private val qualities = listOf(0 to "Original", 320 to "320 kbps", 256 to "256 kbps", 192 to "192 kbps", 128 to "128 kbps", 96 to "96 kbps")
+private val qualities = listOf(0 to "Original", 320 to "320 kbps", 256 to "256 kbps", 192 to "192 kbps", 160 to "160 kbps", 128 to "128 kbps", 96 to "96 kbps")
 
 @Composable
 private fun QualityRow(title: String, value: Int, onChange: (Int) -> Unit) {

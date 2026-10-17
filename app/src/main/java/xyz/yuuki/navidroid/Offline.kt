@@ -225,11 +225,14 @@ class Offline(private val app: App) {
         collections.forEach { c -> c.songs.forEach { want.putIfAbsent(it.id, it) } }
 
         ready.await()
-        val br = app.prefs.downloadBitrate
+        val pref = app.prefs.downloadBitrate
+        // Re-encoding a song that is already small costs quality and saves little: keep those as they are.
+        // ponytail: 1.25x the target; a 192 kbps MP3 stays, a 256 kbps AAC or any lossless file becomes Opus.
+        fun br(s: Song) = if (s.bitRate in 1..pref * 5 / 4) 0 else pref
         // Downloaded at another quality: fetch again so the setting applies to songs already on the phone.
         val stale = want.keys.filter { id ->
             manager.downloadIndex.getDownload(id)?.takeIf { it.state == Download.STATE_COMPLETED }
-                ?.let { JSONObject(String(it.request.data)).optInt("br") != br } == true
+                ?.let { JSONObject(String(it.request.data)).optInt("br") != br(want.getValue(id)) } == true
         }.toSet()
         withContext(Dispatchers.Main) {
             val have = states.value
@@ -238,9 +241,9 @@ class Offline(private val app: App) {
                 if (s == null || s == Download.STATE_FAILED || song.id in stale) {
                     // Removing first makes the manager wipe the old bytes before downloading again.
                     if (song.id in stale) DownloadService.sendRemoveDownload(app, DownloadSvc::class.java, song.id, false)
-                    val req = DownloadRequest.Builder(song.id, songUri(song.id, br))
+                    val req = DownloadRequest.Builder(song.id, songUri(song.id, br(song)))
                         .setCustomCacheKey(song.id)
-                        .setData(song.toJson().put("br", br).toString().toByteArray())
+                        .setData(song.toJson().put("br", br(song)).toString().toByteArray())
                         .build()
                     DownloadService.sendAddDownload(app, DownloadSvc::class.java, req, false)
                 }

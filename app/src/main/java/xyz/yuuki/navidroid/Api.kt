@@ -172,7 +172,7 @@ class Prefs(ctx: Context) {
     var salt by str("salt")
     var streamBitrateWifi by int("streamWifi", 0)
     var streamBitrateMobile by int("streamMobile", 192)
-    var downloadBitrate by int("downloadBitrate", 128)
+    var downloadBitrate by int("downloadBitrate", 160)
     var wifiOnlyDownloads by bool("wifiOnly", true)
     var lastSync by long("lastSync")
 
