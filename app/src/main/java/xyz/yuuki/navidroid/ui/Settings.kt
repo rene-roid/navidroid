@@ -107,7 +107,7 @@ import xyz.yuuki.navidroid.App
 import xyz.yuuki.navidroid.normalizeEndpoint
 import xyz.yuuki.navidroid.song
 
-private val fieldColors @Composable get() = OutlinedTextFieldDefaults.colors(
+val fieldColors @Composable get() = OutlinedTextFieldDefaults.colors(
     focusedContainerColor = Surface, unfocusedContainerColor = Surface, disabledContainerColor = Surface,
     focusedBorderColor = Green, unfocusedBorderColor = Color.Transparent, cursorColor = Green,
     focusedLabelColor = Green, unfocusedLabelColor = Sub, focusedLeadingIconColor = Green, unfocusedLeadingIconColor = Sub,

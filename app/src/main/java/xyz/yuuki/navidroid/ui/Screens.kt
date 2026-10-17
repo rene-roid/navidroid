@@ -39,6 +39,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.ArrowCircleDown
 import androidx.compose.material.icons.rounded.AutoAwesome
@@ -413,6 +414,11 @@ fun LibraryScreen() {
     var onlySaved by rememberSaveable { mutableStateOf(false) }
     val pins by offline.pins.collectAsStateWithLifecycle()
     val playlists = rememberLoad("playlists") { api.playlists() }
+    var creating by remember { mutableStateOf(false) }
+    if (creating) NewPlaylist { id ->
+        creating = false
+        if (id != null) { playlists.refresh(); nav.go(Route.Open(Kind.Playlist, id)) }
+    }
     val artists = rememberLoad("artists") { api.artists() }
     val starred = rememberLoad("starred") { api.starred() }
     val albums = remember { mutableStateListOf<xyz.yuuki.navidroid.Album>() }
@@ -496,6 +502,9 @@ fun LibraryScreen() {
                 "Playlists" -> {
                     item("liked") {
                         ListRow("Liked Songs", "Playlist", { LikedCover(Modifier.size(56.dp)) }, { mark(Kind.Liked, "liked") }) { nav.go(Route.Open(Kind.Liked, "liked")) }
+                    }
+                    if (!onlySaved) item("new") {
+                        ListRow("Create playlist", "Then add songs from any song's menu", { Box(Modifier.size(56.dp).background(Tile, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, null) } }) { creating = true }
                     }
                     items(ownPlaylists, key = { it.id }) { playlistRow(it) }
                 }

@@ -468,6 +468,10 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
         call("updatePlaylist", "playlistId" to playlistId, *songIds.map { "songIdToAdd" to it }.toTypedArray())
     }
 
+    /** Returns the new playlist's id. */
+    suspend fun createPlaylist(name: String, songIds: List<String>): String? =
+        call("createPlaylist", "name" to name, *songIds.map { "songId" to it }.toTypedArray()).optJSONObject("playlist")?.optString("id")
+
     // ---- scrobbling: also called for downloaded songs, so Navidrome's stats stay complete ----
 
     /** Network went away or came back; forget the fail-fast window so the next call tries again. */

@@ -39,6 +39,14 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -425,12 +433,24 @@ fun AddToPlaylist(songs: List<Song>, onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
     val lists = rememberLoad("playlists") { App.it.api.playlists() }
     val user = App.it.prefs.username
+    var naming by remember { mutableStateOf(false) }
+    if (naming) return NewPlaylist(songs) { onDone() }
     AlertDialog(
         onDismissRequest = onDone,
         containerColor = Elevated,
         title = { Text("Add to playlist") },
         text = {
             LazyColumn(Modifier.height(360.dp)) {
+                item("new") {
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).clickable { naming = true }.padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Box(Modifier.size(44.dp).background(Surface, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, null) }
+                        Text("New playlist")
+                    }
+                }
                 items(lists.data.orEmpty().filter { it.mix == null && it.owner == user }, key = Playlist::id) { p ->
                     Row(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).clickable {
@@ -449,5 +469,40 @@ fun AddToPlaylist(songs: List<Song>, onDone: () -> Unit) {
             }
         },
         confirmButton = { TextButton(onDone) { Text("Cancel", color = Sub) } },
+    )
+}
+
+/** Names and creates a playlist holding [songs]; [onDone] gets its id, or null if cancelled or it failed. */
+@Composable
+fun NewPlaylist(songs: List<Song> = emptyList(), onDone: (String?) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var name by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    fun create() {
+        if (name.isBlank() || busy) return
+        busy = true
+        scope.launch {
+            runCatching { App.it.api.createPlaylist(name.trim(), songs.map { it.id }) }
+                .onSuccess { onDone(it) }
+                .onFailure { error = it.message ?: "Couldn't create the playlist"; busy = false }
+        }
+    }
+    AlertDialog(
+        onDismissRequest = { onDone(null) },
+        containerColor = Elevated,
+        title = { Text("New playlist") },
+        text = {
+            OutlinedTextField(
+                name, { name = it; error = null }, Modifier.fillMaxWidth().focusRequester(focus), singleLine = true, colors = fieldColors,
+                placeholder = { Text("Playlist name") }, isError = error != null, supportingText = error?.let { { Text(it) } },
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { create() }),
+            )
+        },
+        confirmButton = { TextButton(::create, enabled = name.isNotBlank() && !busy) { Text("Create", color = Green) } },
+        dismissButton = { TextButton({ onDone(null) }) { Text("Cancel", color = Sub) } },
     )
 }
