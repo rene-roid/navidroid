@@ -317,7 +317,7 @@ fun GenreCover(name: String, modifier: Modifier = Modifier) = BoxWithConstraints
 fun TileCover(kind: Kind, id: String, coverArt: String?, mix: Mix?, modifier: Modifier = Modifier, size: Int = 300) = when {
     mix != null -> MixCover(mix, coverArt, modifier)
     kind == Kind.Liked -> LikedCover(modifier)
-    kind == Kind.Genre -> GenreCover(id, modifier)
+    kind == Kind.Genre && coverArt == null -> GenreCover(id, modifier)
     kind == Kind.Artist -> Cover(coverArt, size, modifier.aspectRatio(1f), CircleShape)
     else -> Cover(coverArt, size, modifier.aspectRatio(1f))
 }

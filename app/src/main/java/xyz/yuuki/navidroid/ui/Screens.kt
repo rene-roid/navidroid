@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -547,7 +548,7 @@ fun CollectionScreen(kind: Kind, id: String) {
     val c = load.data
     LaunchedEffect(c) { c?.let { App.it.offline.warm(it.songs) } }
     val color = c?.mix?.let { Color(it.color) }
-        ?: if (kind == Kind.Liked) Color(0xFF5038A0) else if (kind == Kind.Genre) Color(xyz.yuuki.navidroid.paletteColor(id)) else rememberCoverColor(c?.coverArt)
+        ?: if (kind == Kind.Liked) Color(0xFF5038A0) else if (kind == Kind.Genre) rememberCoverColor(c?.coverArt, Color(xyz.yuuki.navidroid.paletteColor(id))) else rememberCoverColor(c?.coverArt)
     val list = rememberLazyListState()
     val collapsed by remember { derivedStateOf { list.firstVisibleItemIndex > 0 || list.firstVisibleItemScrollOffset > 600 } }
     val wide = isWide()
@@ -558,7 +559,9 @@ fun CollectionScreen(kind: Kind, id: String) {
                 Column(
                     Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(color, Bg))).statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp),
                 ) {
-                    val cover = @Composable { TileCover(kind, id, c?.coverArt, c?.mix, Modifier.size(if (wide) 160.dp else 240.dp).shadow(20.dp, RoundedCornerShape(6.dp)), 600) }
+                    val mosaic = remember(c) { c?.takeIf { kind == Kind.Genre }?.songs?.mapNotNull { it.coverArt }?.distinct()?.take(4)?.takeIf { it.size == 4 } }
+                    val coverMod = Modifier.size(if (wide) 160.dp else 240.dp).shadow(20.dp, RoundedCornerShape(6.dp))
+                    val cover = @Composable { if (mosaic != null) CoverMosaic(mosaic, coverMod) else TileCover(kind, id, c?.coverArt, c?.mix, coverMod, 600) }
                     if (wide) Row(verticalAlignment = Alignment.Bottom) {
                         cover()
                         Column(Modifier.padding(start = 20.dp)) { CollectionInfo(kind, c) }
@@ -593,6 +596,14 @@ fun CollectionScreen(kind: Kind, id: String) {
             item("end") { BottomSpacer() }
         }
         TopBar(c?.title ?: "", color, collapsed)
+    }
+}
+
+/** Four album covers in a 2x2 grid, for a genre's header. */
+@Composable
+private fun CoverMosaic(ids: List<String>, modifier: Modifier) = Column(modifier.clip(RoundedCornerShape(6.dp))) {
+    ids.chunked(2).forEach { row ->
+        Row(Modifier.weight(1f)) { row.forEach { Cover(it, 300, Modifier.weight(1f).fillMaxHeight(), RoundedCornerShape(0.dp)) } }
     }
 }
 

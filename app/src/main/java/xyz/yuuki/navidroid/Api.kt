@@ -388,7 +388,7 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
                 }
                 Kind.Liked -> Collection(Kind.Liked, "liked", "Liked Songs", null, prefs.username, null,
                     starred().list("song").map(Song::from).reversed())
-                Kind.Genre -> Collection(Kind.Genre, id, id, null, null, null,
+                Kind.Genre -> Collection(Kind.Genre, id, id, null, null, runCatching { genreCover(id) }.getOrNull(),
                     call("getSongsByGenre", "genre" to id, "count" to 500).getJSONObject("songsByGenre").list("song").map(Song::from))
                 Kind.Artist -> error("artists are not collections")
             }
