@@ -13,6 +13,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -45,9 +46,11 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.DownloadForOffline
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.LibraryMusic
 import androidx.compose.material3.Icon
@@ -76,7 +79,9 @@ import com.google.common.util.concurrent.ListenableFuture
 import xyz.yuuki.navidroid.ui.ArtistScreen
 import xyz.yuuki.navidroid.ui.Bg
 import xyz.yuuki.navidroid.ui.CollectionScreen
+import xyz.yuuki.navidroid.ui.DockedPlayer
 import xyz.yuuki.navidroid.ui.DownloadsScreen
+import xyz.yuuki.navidroid.ui.HomeTint
 import xyz.yuuki.navidroid.ui.HomeScreen
 import xyz.yuuki.navidroid.ui.LibraryScreen
 import xyz.yuuki.navidroid.ui.LocalNav
@@ -159,14 +164,25 @@ private fun Shell(onLogout: () -> Unit) {
     val docked = wide && player?.song != null
 
     CompositionLocalProvider(LocalNav provides nav) {
-        Box(Modifier.fillMaxSize().background(Bg)) {
-            // Landscape has its own layout: an icon rail, the page, and while something plays the player on the right half.
+        // In landscape the rail, the page and the player card share one background tinted by the page, so it runs edge to edge.
+        val page = nav.stack.last()
+        val tint by animateColorAsState(if (!wide) Bg else nav.tints[page] ?: if (page == Route.Home) HomeTint else Bg, tween(300))
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to tint, .35f to Bg))) {
+            // Landscape has its own layout: an icon rail, the page, and while something plays the player as a card on the right.
             Row(Modifier.fillMaxSize()) {
                 if (wide) Column(
-                    Modifier.fillMaxHeight().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Start + WindowInsetsSides.Vertical)).width(76.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+                    Modifier.fillMaxHeight().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Start + WindowInsetsSides.Vertical))
+                        .width(76.dp).padding(top = 10.dp, bottom = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                ) { Tabs(nav, Modifier, rail = true) }
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    // Tabs line up with the page header, downloads and settings with the bottom of the player card.
+                    val top = nav.stack.last()
+                    Tabs(nav, Modifier, rail = true)
+                    Spacer(Modifier.weight(1f))
+                    RailItem("Downloads", Icons.Rounded.DownloadForOffline, top == Route.Downloads) { if (top != Route.Downloads) nav.go(Route.Downloads) }
+                    RailItem("Settings", Icons.Rounded.Settings, top == Route.Settings) { if (top != Route.Settings) nav.go(Route.Settings) }
+                }
                 Box(Modifier.weight(1f).then(if (docked) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.End)))) {
                     NavDisplay(
                         backStack = nav.stack,
@@ -198,7 +214,11 @@ private fun Shell(onLogout: () -> Unit) {
                         Row(Modifier.fillMaxWidth().navigationBarsPadding().height(60.dp)) { Tabs(nav, Modifier.weight(1f)) }
                     }
                 }
-                if (docked) Box(Modifier.weight(1f)) { NowPlaying(player, docked = true) }
+                if (docked) DockedPlayer(
+                    player,
+                    Modifier.width(360.dp).fillMaxHeight().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.End + WindowInsetsSides.Vertical))
+                        .padding(top = 8.dp, bottom = 8.dp, end = 8.dp),
+                )
             }
 
             AnimatedVisibility(

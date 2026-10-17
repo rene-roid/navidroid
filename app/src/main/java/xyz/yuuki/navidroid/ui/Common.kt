@@ -112,6 +112,9 @@ sealed interface Route {
 class Nav {
     val stack = androidx.compose.runtime.mutableStateListOf<Route>(Route.Home)
 
+    /** The colour a page wants behind it; in landscape the shell paints it under the rail and the player card too. */
+    val tints = mutableStateMapOf<Route, Color>()
+
     fun go(r: Route) = stack.add(r)
 
     fun back() {

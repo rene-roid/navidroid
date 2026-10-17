@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Navidroid — landscape</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800;900&family=Material+Symbols+Rounded:opsz,wght,FILL@24,400,0..1&display=block" rel="stylesheet">
+<style>
+  /* Theme.kt tokens */
+  :root {
+    --bg: #121212; --surface: #1f1f1f; --elevated: #282828; --tile: #2a2a2a;
+    --green: #1db954; --green-light: #1ed760; --sub: #b3b3b3; --faint: #7a7a7a; --line: #3e3e3e;
+    --cover: #b4473a; /* the dominant colour picked from the playing cover */
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html { background: #0a0a0a; }
+  body { font-family: Figtree, system-ui, sans-serif; color: #fff; display: grid; justify-items: center; gap: 20px; padding: 24px 0; }
+  .ms { font-family: 'Material Symbols Rounded'; font-size: 24px; line-height: 1; user-select: none;
+        font-variation-settings: 'FILL' 0; }
+  .ms.fill { font-variation-settings: 'FILL' 1; }
+  button { all: unset; cursor: pointer; display: grid; place-items: center; }
+
+  /* Design controls (not part of the app) */
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; font-size: 13px; }
+  .controls button { padding: 8px 14px; border-radius: 99px; background: #222; color: var(--sub); font-weight: 600; }
+  .controls button[aria-pressed=true] { background: #fff; color: #000; }
+  .controls .sep { width: 1px; background: #333; margin: 0 4px; }
+  .note { color: var(--faint); font-size: 13px; max-width: 892px; text-align: center; line-height: 1.5; }
+
+  /* Phone in landscape: 892×412 dp (Pixel 7-ish) */
+  .phone { width: 892px; height: 412px; border-radius: 32px; background: var(--bg); overflow: hidden; position: relative;
+           box-shadow: 0 0 0 10px #000, 0 0 0 11px #2a2a2a, 0 30px 80px rgba(0,0,0,.6); display: flex; }
+  .phone::before { /* camera cutout sits on the left in landscape */
+    content: ''; position: absolute; left: 14px; top: 50%; width: 10px; height: 10px; margin-top: -5px; border-radius: 50%; background: #000; z-index: 9; }
+
+  /* Rail */
+  .rail { width: 76px; padding: 14px 0 14px 12px; display: flex; flex-direction: column; align-items: center; gap: 6px; flex: none; }
+  .avatar { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg, #f5a3c7, #8a5cf6);
+            font-weight: 800; font-size: 15px; display: grid; place-items: center; color: #1a1a1a; margin-bottom: auto; }
+  .rail .tab { width: 52px; height: 52px; border-radius: 16px; color: var(--sub); transition: .15s; }
+  .rail .tab .ms { font-size: 26px; }
+  .rail .tab.on { background: rgba(255,255,255,.14); color: #fff; }
+  .rail .tab.on .ms { font-variation-settings: 'FILL' 1; }
+  .rail .spacer { margin-top: auto; }
+  .rail .small { width: 44px; height: 44px; border-radius: 14px; color: var(--sub); }
+
+  /* Page */
+  .page { flex: 1; min-width: 0; overflow-y: auto; scrollbar-width: none; position: relative; padding: 18px 0 24px; }
+  .page header { display: flex; align-items: center; padding: 0 20px 0 12px; gap: 4px; }
+  .page h1 { font-size: 26px; font-weight: 800; letter-spacing: -.3px; flex: 1; }
+  .icon { width: 40px; height: 40px; border-radius: 50%; color: #fff; }
+  .icon:hover { background: rgba(255,255,255,.08); }
+  .chips { display: flex; gap: 8px; padding: 14px 12px 4px; }
+  .chip { padding: 7px 14px; border-radius: 99px; background: var(--tile); font-size: 13px; font-weight: 600; }
+  .chip.on { background: var(--green); color: #000; }
+  .quick { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; padding: 12px 20px 4px 12px; }
+  .quick a { display: flex; align-items: center; height: 52px; border-radius: 6px; background: var(--tile); overflow: hidden;
+             font-size: 13px; font-weight: 700; gap: 10px; cursor: pointer; }
+  .quick a:hover { background: #333; }
+  .quick .cv { width: 52px; height: 52px; flex: none; border-radius: 0; }
+  .quick a.playing { color: var(--green); }
+  .section h2 { font-size: 20px; font-weight: 700; padding: 22px 12px 10px; display: flex; align-items: baseline; }
+  .section h2 small { margin-left: auto; margin-right: 20px; font-size: 12px; color: var(--sub); font-weight: 700; }
+  .row { display: flex; gap: 14px; overflow-x: auto; scrollbar-width: none; padding: 0 20px 0 12px; }
+  .card { width: 128px; flex: none; cursor: pointer; }
+  .card .cv { width: 128px; height: 128px; border-radius: 6px; margin-bottom: 8px; box-shadow: 0 8px 20px rgba(0,0,0,.4); }
+  .card.round .cv { border-radius: 50%; }
+  .card b { display: block; font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card span { font-size: 12px; color: var(--sub); }
+
+  /* Placeholder cover art: random photos stand in for album covers */
+  .cv { background: var(--c, #444); }
+  .c1 { --c: url(https://picsum.photos/seed/currents/400) center / cover; }
+  .c2 { --c: url(https://picsum.photos/seed/mix1/400) center / cover; }
+  .c3 { --c: url(https://picsum.photos/seed/lofi/400) center / cover; }
+  .c4 { --c: url(https://picsum.photos/seed/weekly/400) center / cover; }
+  .c5 { --c: url(https://picsum.photos/seed/am/400) center / cover; }
+  .c6 { --c: url(https://picsum.photos/seed/ram/400) center / cover; }
+  .c7 { --c: url(https://picsum.photos/seed/impala/400) center / cover; }
+  .c8 { --c: url(https://picsum.photos/seed/rainbows/400) center / cover; }
+  .liked { --c: linear-gradient(135deg, #450af5, #c4efd9); display: grid; place-items: center; }
+
+  /* Shared player pieces */
+  .seek { height: 4px; border-radius: 2px; background: rgba(255,255,255,.25); position: relative; cursor: pointer; }
+  .seek i { position: absolute; inset: 0 auto 0 0; width: 38%; background: #fff; border-radius: 2px; }
+  .seek i::after { content: ''; position: absolute; right: -6px; top: -4px; width: 12px; height: 12px; border-radius: 50%; background: #fff; opacity: 0; transition: .15s; }
+  .seek:hover i::after { opacity: 1; }
+  .times { display: flex; justify-content: space-between; font-size: 11px; font-weight: 600; color: rgba(255,255,255,.7); margin-top: 6px; }
+  .ctrls { display: flex; align-items: center; justify-content: space-between; }
+  .ctrls .ms { font-size: 26px; }
+  .ctrls .skip .ms { font-size: 36px; font-variation-settings: 'FILL' 1; }
+  .ctrls .on { color: var(--green); position: relative; }
+  .ctrls .on::after { content: ''; position: absolute; bottom: -6px; left: 50%; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: var(--green); }
+  .pp { width: 52px; height: 52px; border-radius: 50%; background: #fff; color: #000; transition: transform .1s; }
+  .pp:active { transform: scale(.94); }
+  .pp .ms { font-size: 32px; font-variation-settings: 'FILL' 1; }
+  .heart.on { color: var(--green); }
+  .heart.on .ms { font-variation-settings: 'FILL' 1; }
+  .ttl { font-weight: 700; font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .art { font-size: 14px; color: rgba(255,255,255,.7); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  .player { display: none; }
+  body.playing [data-v=card]  .player.dock,
+  body.playing [data-v=bleed] .player.bleed,
+  body.playing [data-v=bar]   .player.bar { display: flex; }
+
+  /* A. Card — a floating panel; cover beside the title, lyrics / up next fill the rest */
+  .player.dock { width: 356px; flex: none; margin: 8px 8px 8px 0; border-radius: 18px; flex-direction: column; overflow: hidden;
+                 background: linear-gradient(170deg, color-mix(in srgb, var(--cover) 70%, #000), color-mix(in srgb, var(--cover) 18%, #121212) 55%, #181818); }
+  .dock .head { display: flex; gap: 14px; padding: 14px 10px 0 14px; align-items: flex-start; }
+  .dock .head .cv { width: 96px; height: 96px; border-radius: 10px; flex: none; box-shadow: 0 10px 24px rgba(0,0,0,.45); }
+  .dock .meta { flex: 1; min-width: 0; padding-top: 4px; }
+  .dock .from { font-size: 10px; letter-spacing: 1px; font-weight: 700; color: rgba(255,255,255,.6); margin-bottom: 6px; }
+  .dock .meta .acts { display: flex; margin: 8px 0 0 -10px; }
+  .dock .body { padding: 12px 16px 0; }
+  .dock .ctrls { padding: 8px 0 4px; }
+  .seg { display: flex; gap: 4px; margin: 4px 12px 0; padding: 3px; border-radius: 10px; background: rgba(0,0,0,.25); }
+  .seg button { flex: 1; padding: 6px; border-radius: 8px; font-size: 12px; font-weight: 700; color: var(--sub); text-align: center; }
+  .seg button.on { background: rgba(255,255,255,.14); color: #fff; }
+  .panel { flex: 1; overflow-y: auto; scrollbar-width: none; padding: 10px 16px 14px;
+           mask-image: linear-gradient(transparent, #000 14px, #000 calc(100% - 20px), transparent); }
+  .lyrics p { font-size: 18px; font-weight: 700; line-height: 1.35; color: rgba(255,255,255,.4); margin-bottom: 8px; }
+  .lyrics p.past { color: rgba(255,255,255,.65); }
+  .lyrics p.now { color: #fff; }
+  .queue li { list-style: none; display: flex; align-items: center; gap: 12px; padding: 5px 0; }
+  .queue ul { padding: 0; }
+  .queue .cv { width: 40px; height: 40px; border-radius: 4px; flex: none; }
+  .queue b { display: block; font-size: 14px; font-weight: 500; }
+  .queue span { font-size: 12px; color: var(--sub); }
+  .queue div { flex: 1; min-width: 0; }
+  .queue .x { color: var(--faint); font-size: 20px; }
+  [data-tab=lyrics] .queue, [data-tab=queue] .lyrics { display: none; }
+
+  /* B. Bleed — today's layout, refined: cover fills the half, controls in a shade along the bottom */
+  .player.bleed { width: 50%; flex: none; position: relative; flex-direction: column; justify-content: flex-end; }
+  .bleed .bigcv { position: absolute; inset: 0; }
+  .bleed .shade { position: absolute; inset: 0;
+      background: linear-gradient(90deg, var(--bg), transparent 48px),
+                  linear-gradient(transparent 30%, color-mix(in srgb, var(--cover) 45%, #000c) 62%, color-mix(in srgb, var(--cover) 30%, #000) 100%);
+      backdrop-filter: blur(0); }
+  .bleed .over { position: relative; padding: 0 20px 14px 32px; }
+  .bleed .top { position: absolute; top: 14px; left: 32px; right: 14px; display: flex; gap: 8px; z-index: 1; }
+  .bleed .pill { padding: 6px 12px 6px 8px; border-radius: 99px; background: rgba(0,0,0,.45); backdrop-filter: blur(12px);
+                 display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; }
+  .bleed .pill .ms { font-size: 18px; }
+  .bleed .pill.end { margin-left: auto; }
+  .bleed .line { display: flex; align-items: center; gap: 4px; margin-bottom: 10px; }
+  .bleed .line > div { flex: 1; min-width: 0; }
+  .bleed .ttl { font-size: 22px; }
+  .bleed .ctrls { margin-top: 6px; }
+
+  /* C. Bar — desktop-style: page keeps the width, player is a slim bar under it */
+  .stack { flex: 1; min-width: 0; display: flex; flex-direction: column; background: linear-gradient(#2e2745, var(--bg) 140px); }
+  .player.bar { height: 72px; flex: none; align-items: center; gap: 16px; margin: 0 8px 8px 0; padding: 0 12px 0 8px; border-radius: 14px;
+                background: linear-gradient(90deg, color-mix(in srgb, var(--cover) 55%, #181818), #1c1c1c 45%); }
+  .bar .who { display: flex; align-items: center; gap: 12px; width: 230px; min-width: 0; }
+  .bar .who .cv { width: 52px; height: 52px; border-radius: 8px; flex: none; }
+  .bar .who > div { min-width: 0; flex: 1; }
+  .bar .ttl { font-size: 14px; }
+  .bar .art { font-size: 12px; }
+  .bar .mid { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+  .bar .ctrls { justify-content: center; gap: 18px; }
+  .bar .ctrls .skip .ms { font-size: 28px; }
+  .bar .pp { width: 36px; height: 36px; }
+  .bar .pp .ms { font-size: 24px; }
+  .bar .seekrow { display: flex; align-items: center; gap: 8px; font-size: 10px; color: rgba(255,255,255,.7); font-weight: 600; }
+  .bar .seekrow .seek { flex: 1; height: 3px; }
+  .bar .side { display: flex; color: var(--sub); }
+  .bar .side .ms { font-size: 22px; }
+</style>
+</head>
+<body class="playing">
+
+<div class="controls" id="variants">
+  <button data-set="card" aria-pressed="true">A · Card</button>
+  <button data-set="bleed" aria-pressed="false">B · Full-bleed (current)</button>
+  <button data-set="bar" aria-pressed="false">C · Bottom bar</button>
+  <span class="sep"></span>
+  <button id="playing" aria-pressed="true">Something playing</button>
+</div>
+
+<div class="phone" data-v="card" id="phone">
+  <nav class="rail">
+    <div class="avatar">F</div>
+    <button class="tab on" title="Home"><span class="ms">home</span></button>
+    <button class="tab" title="Search"><span class="ms">search</span></button>
+    <button class="tab" title="Your Library"><span class="ms">library_music</span></button>
+    <div class="spacer"></div>
+    <button class="small" title="Downloads"><span class="ms">download_for_offline</span></button>
+    <button class="small" title="Settings"><span class="ms">settings</span></button>
+  </nav>
+
+  <div class="stack">
+    <div style="display:flex; flex:1; min-height:0">
+      <main class="page">
+        <header><h1>Good evening</h1></header>
+        <div class="chips"><span class="chip on">All</span><span class="chip">Albums</span><span class="chip">Playlists</span><span class="chip">Artists</span></div>
+        <div class="quick">
+          <a><span class="cv liked"><span class="ms fill" style="font-size:22px">favorite</span></span>Liked Songs</a>
+          <a class="playing"><span class="cv c1"></span>Currents</a>
+          <a><span class="cv c2"></span>Daily Mix 1</a>
+          <a><span class="cv c3"></span>Lo-fi beats</a>
+          <a><span class="cv c4"></span>Discover Weekly</a>
+          <a><span class="cv c5"></span>AM</a>
+        </div>
+        <section class="section">
+          <h2>Recently played <small>Show all</small></h2>
+          <div class="row">
+            <div class="card"><div class="cv c6"></div><b>Random Access Memories</b><span>Daft Punk</span></div>
+            <div class="card round"><div class="cv c7"></div><b>Tame Impala</b><span>Artist</span></div>
+            <div class="card"><div class="cv c8"></div><b>In Rainbows</b><span>Radiohead</span></div>
+            <div class="card"><div class="cv c3"></div><b>Blonde</b><span>Frank Ocean</span></div>
+            <div class="card"><div class="cv c4"></div><b>Melodrama</b><span>Lorde</span></div>
+          </div>
+        </section>
+        <section class="section">
+          <h2>Made for you <small>Show all</small></h2>
+          <div class="row">
+            <div class="card"><div class="cv c2"></div><b>Daily Mix 1</b><span>Mix</span></div>
+            <div class="card"><div class="cv c5"></div><b>Daily Mix 2</b><span>Mix</span></div>
+            <div class="card"><div class="cv c1"></div><b>Rock genre mix</b><span>Mix</span></div>
+            <div class="card"><div class="cv c7"></div><b>Chill</b><span>Mix</span></div>
+          </div>
+        </section>
+      </main>
+
+      <!-- A. Card -->
+      <aside class="player dock" data-tab="lyrics">
+        <div class="head">
+          <div class="cv c1"></div>
+          <div class="meta">
+            <div class="from">PLAYING FROM CURRENTS</div>
+            <div class="ttl">The Less I Know the Better</div>
+            <div class="art">Tame Impala</div>
+            <div class="acts">
+              <button class="icon heart on"><span class="ms">favorite</span></button>
+              <button class="icon"><span class="ms">more_horiz</span></button>
+            </div>
+          </div>
+        </div>
+        <div class="body">
+          <div class="seek"><i></i></div>
+          <div class="times"><span>1:31</span><span>3:36</span></div>
+          <div class="ctrls">
+            <button class="on"><span class="ms">shuffle</span></button>
+            <button class="skip"><span class="ms">skip_previous</span></button>
+            <button class="pp"><span class="ms">pause</span></button>
+            <button class="skip"><span class="ms">skip_next</span></button>
+            <button><span class="ms">repeat</span></button>
+          </div>
+        </div>
+        <div class="seg">
+          <button class="on" data-tab="lyrics">Lyrics</button>
+          <button data-tab="queue">Up next</button>
+        </div>
+        <div class="panel">
+          <div class="lyrics">
+            <p class="past">Someone said they left together</p>
+            <p class="past">I ran out the door to get her</p>
+            <p class="now">She was holding hands with Trevor</p>
+            <p>Not the greatest feeling ever</p>
+            <p>Said, "Pull yourself together</p>
+            <p>You should try your luck with Heather"</p>
+          </div>
+          <div class="queue"><ul>
+            <li><span class="cv c1"></span><div><b>Let It Happen</b><span>Tame Impala</span></div><span class="ms x">close</span></li>
+            <li><span class="cv c6"></span><div><b>Get Lucky</b><span>Daft Punk</span></div><span class="ms x">close</span></li>
+            <li><span class="cv c8"></span><div><b>Weird Fishes</b><span>Radiohead</span></div><span class="ms x">close</span></li>
+            <li><span class="cv c3"></span><div><b>Nights</b><span>Frank Ocean</span></div><span class="ms x">close</span></li>
+          </ul></div>
+        </div>
+      </aside>
+
+      <!-- B. Full-bleed -->
+      <aside class="player bleed">
+        <div class="bigcv cv c1"></div>
+        <div class="shade"></div>
+        <div class="top">
+          <span class="pill"><span class="ms">lyrics</span>Lyrics</span>
+          <span class="pill"><span class="ms">queue_music</span>Up next</span>
+          <span class="pill end" style="padding:6px"><span class="ms">more_horiz</span></span>
+        </div>
+        <div class="over">
+          <div class="line">
+            <div><div class="ttl">The Less I Know the Better</div><div class="art">Tame Impala</div></div>
+            <button class="icon heart on"><span class="ms">favorite</span></button>
+          </div>
+          <div class="seek"><i></i></div>
+          <div class="times"><span>1:31</span><span>3:36</span></div>
+          <div class="ctrls">
+            <button class="on"><span class="ms">shuffle</span></button>
+            <button class="skip"><span class="ms">skip_previous</span></button>
+            <button class="pp"><span class="ms">pause</span></button>
+            <button class="skip"><span class="ms">skip_next</span></button>
+            <button><span class="ms">repeat</span></button>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- C. Bar -->
+    <footer class="player bar">
+      <div class="who">
+        <div class="cv c1"></div>
+        <div><div class="ttl">The Less I Know the Better</div><div class="art">Tame Impala</div></div>
+        <button class="icon heart on"><span class="ms" style="font-size:22px">favorite</span></button>
+      </div>
+      <div class="mid">
+        <div class="ctrls">
+          <button class="on"><span class="ms" style="font-size:22px">shuffle</span></button>
+          <button class="skip"><span class="ms">skip_previous</span></button>
+          <button class="pp"><span class="ms">pause</span></button>
+          <button class="skip"><span class="ms">skip_next</span></button>
+          <button><span class="ms" style="font-size:22px">repeat</span></button>
+        </div>
+        <div class="seekrow"><span>1:31</span><div class="seek"><i></i></div><span>3:36</span></div>
+      </div>
+      <div class="side">
+        <button class="icon"><span class="ms">lyrics</span></button>
+        <button class="icon"><span class="ms">queue_music</span></button>
+        <button class="icon"><span class="ms">open_in_full</span></button>
+      </div>
+    </footer>
+  </div>
+</div>
+
+<p class="note">892 × 412 dp, Pixel-class phone in landscape. Colours, type and sizes come from Theme.kt. Cover art is placeholder; the player tint (<code>--cover</code>) stands in for the colour picked from the real cover.</p>
+
+<script>
+  const fit = () => phone.style.zoom = Math.min(1, (innerWidth - 24) / 914)
+  addEventListener('resize', fit)
+  const phone = document.getElementById('phone')
+  document.querySelectorAll('#variants [data-set]').forEach(b => b.onclick = () => {
+    phone.dataset.v = b.dataset.set
+    document.querySelectorAll('#variants [data-set]').forEach(o => o.setAttribute('aria-pressed', o === b))
+  })
+  document.getElementById('playing').onclick = e => {
+    const on = document.body.classList.toggle('playing')
+    e.currentTarget.setAttribute('aria-pressed', on)
+  }
+  fit()
+  const img = new Image()
+  img.crossOrigin = 'anonymous'
+  img.onload = () => {
+    const c = document.createElement('canvas').getContext('2d')
+    c.drawImage(img, 0, 0, 1, 1)
+    const [r, g, b] = c.getImageData(0, 0, 1, 1).data
+    document.documentElement.style.setProperty('--cover', `rgb(${r},${g},${b})`)
+  }
+  img.src = 'https://picsum.photos/seed/currents/400'
+  document.querySelectorAll('.pp').forEach(b => b.onclick = () => {
+    const paused = b.firstElementChild.textContent === 'play_arrow'
+    document.querySelectorAll('.pp .ms').forEach(i => i.textContent = paused ? 'pause' : 'play_arrow')
+  })
+  document.querySelectorAll('.seg button').forEach(b => b.onclick = () => {
+    b.closest('.player').dataset.tab = b.dataset.tab
+    b.parentElement.querySelectorAll('button').forEach(o => o.classList.toggle('on', o === b))
+  })
+  document.querySelectorAll('.heart').forEach(b => b.onclick = () => b.classList.toggle('on'))
+  document.querySelectorAll('.rail .tab').forEach(b => b.onclick = () =>
+    document.querySelectorAll('.rail .tab').forEach(o => o.classList.toggle('on', o === b)))
+</script>
+</body>
+</html>

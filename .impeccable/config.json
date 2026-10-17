@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "radial-halo",
+        "value": "*",
+        "files": [
+          "design/landscape.html"
+        ],
+        "createdAt": "2026-10-17T07:46:24.086Z",
+        "reason": "agent: L74 is placeholder album-cover art (.c1 sun shape), not a background glow"
+      }
+    ]
+  }
+}

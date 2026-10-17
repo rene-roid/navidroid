@@ -12,12 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.only
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -25,10 +20,9 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -59,12 +53,11 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.BlurredEdgeTreatment
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
@@ -216,72 +209,61 @@ fun MiniPlayer(p: PlayerState, onOpen: () -> Unit) {
     }
 }
 
-/**
- * Full-screen player in portrait. [docked] is the landscape side panel that stays open while something plays:
- * the cover fills it with the controls laid over, and lyrics and the queue scroll in below.
- */
+/** Full-screen player in portrait. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun NowPlaying(p: PlayerState, docked: Boolean = false, onClose: () -> Unit = {}) {
+fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
     val song = p.song ?: return
     val nav = LocalNav.current
     val color = rememberCoverColor(song.coverArt)
     val lyrics = rememberLoad("lyrics:${song.id}") { App.it.api.lyrics(song.id) }
     val pos = rememberPosition(p, 200)
-    val pull = if (docked) Modifier else rememberPullToClose(onClose)
 
-    Box(Modifier.fillMaxSize().then(pull).background(Bg).background(Brush.verticalGradient(listOf(color, lerp(color, Bg, .6f), Bg)))) {
-        LazyColumn(
-            Modifier.fillMaxSize().then(
-                if (docked) Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.End))
-                else Modifier.statusBarsPadding(),
-            ),
-        ) {
-            if (docked) item("hero") { DockedHero(p, song, pos, color) }
-            else {
-                item("top") {
-                    Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClose) { Icon(Icons.Rounded.KeyboardArrowDown, "Close", Modifier.size(32.dp)) }
-                        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("PLAYING FROM", style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp, color = Color.White.copy(alpha = .8f))
-                            Text(p.from ?: song.album, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        SongMenu(song, Color.White)
+    Box(Modifier.fillMaxSize().then(rememberPullToClose(onClose)).background(Bg).background(Brush.verticalGradient(listOf(color, lerp(color, Bg, .6f), Bg)))) {
+        LazyColumn(Modifier.fillMaxSize().statusBarsPadding()) {
+            item("top") {
+                Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClose) { Icon(Icons.Rounded.KeyboardArrowDown, "Close", Modifier.size(32.dp)) }
+                    Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("PLAYING FROM", style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp, color = Color.White.copy(alpha = .8f))
+                        Text(p.from ?: song.album, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
+                    SongMenu(song, Color.White)
                 }
-                item("art") { SwipeArt(p, song) }
-                item("info") {
-                    SongInfo(song) {
-                        onClose()
-                        nav.go(Route.Open(Kind.Artist, song.artistId!!))
-                    }
-                }
-                item("seek") { Seek(p, song, pos) }
-                item("controls") { Controls(p) }
             }
+            item("art") { SwipeArt(p, song) }
+            item("info") {
+                SongInfo(song) {
+                    onClose()
+                    nav.go(Route.Open(Kind.Artist, song.artistId!!))
+                }
+            }
+            item("seek") { Seek(p, song, pos) }
+            item("controls") { Controls(p) }
             lyrics.data?.let { l -> item("lyrics") { LyricsCard(p, l, pos, color) } }
             if (p.upNext.isNotEmpty()) item("next") {
                 Text("Up next", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 24.dp, top = 28.dp, bottom = 8.dp))
             }
-            itemsIndexed(p.upNext, key = { _, (i, s) -> "$i:${s.id}" }) { _, (i, s) ->
-                Row(
-                    Modifier.fillMaxWidth().clickable { p.c.seekTo(i, 0); p.c.play() }.padding(start = 24.dp, end = 8.dp, top = 6.dp, bottom = 6.dp).animateItem(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Cover(s.coverArt, 120, Modifier.size(44.dp))
-                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                        Text(s.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(s.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    IconButton({ p.c.removeMediaItem(i) }) { Icon(Icons.Rounded.Close, "Remove", tint = Sub) }
-                }
-            }
+            itemsIndexed(p.upNext, key = { _, (i, s) -> "$i:${s.id}" }) { _, (i, s) -> QueueRow(p, i, s, Modifier.animateItem(), start = 24.dp) }
             item("bottom") {
                 Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
                 Spacer(Modifier.height(32.dp))
             }
         }
     }
+}
+
+@Composable
+private fun QueueRow(p: PlayerState, i: Int, s: Song, modifier: Modifier, start: Dp, cover: Dp = 44.dp) = Row(
+    modifier.fillMaxWidth().clickable { p.c.seekTo(i, 0); p.c.play() }.padding(start = start, end = 8.dp, top = 6.dp, bottom = 6.dp),
+    verticalAlignment = Alignment.CenterVertically,
+) {
+    Cover(s.coverArt, 120, Modifier.size(cover))
+    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+        Text(s.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(s.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+    IconButton({ p.c.removeMediaItem(i) }) { Icon(Icons.Rounded.Close, "Remove", tint = Sub) }
 }
 
 @Composable
@@ -370,59 +352,104 @@ private fun Modifier.swipeToSkip(p: PlayerState, song: Song): Modifier {
     }
 }
 
-/** Landscape player: the cover fills the panel, with the song and controls in a shaded bar along the bottom. */
+/**
+ * Landscape player: a floating card beside the page. The cover sits next to the title, the controls under it,
+ * and lyrics or the queue fill the rest.
+ */
 @Composable
-private fun LazyItemScope.DockedHero(p: PlayerState, song: Song, pos: Long, color: Color) {
+fun DockedPlayer(p: PlayerState, modifier: Modifier = Modifier) {
+    val song = p.song ?: return
     val nav = LocalNav.current
-    val shade = lerp(color, Color.Black, .55f)
-    Box(Modifier.fillParentMaxSize()) {
-        Box(Modifier.fillMaxSize().swipeToSkip(p, song)) {
-            Cover(song.coverArt, 1000, Modifier.fillMaxSize(), RoundedCornerShape(0.dp))
-            // A blurred copy faded in towards the bottom, so the cover melts into the controls instead of meeting a hard edge.
-            Cover(
-                song.coverArt, 1000,
-                Modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                    .drawWithContent {
-                        drawContent()
-                        drawRect(Brush.verticalGradient(.35f to Color.Transparent, .65f to Color.Black), blendMode = BlendMode.DstIn)
-                    }
-                    .blur(40.dp, BlurredEdgeTreatment.Rectangle),
-                RoundedCornerShape(0.dp),
-            )
-        }
-        // Keeps the status bar icons readable over bright covers.
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Black.copy(alpha = .35f), .15f to Color.Transparent)))
-        // Soft seam against the app on the left.
-        Box(Modifier.fillMaxHeight().width(40.dp).background(Brush.horizontalGradient(listOf(Bg, Color.Transparent))))
-        Column(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                .background(Brush.verticalGradient(0f to Color.Transparent, .35f to shade.copy(alpha = .75f), 1f to shade.copy(alpha = .95f)))
-                .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom)).padding(top = 32.dp),
-        ) {
-            Row(Modifier.padding(start = 24.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(song.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.W700, maxLines = 1, modifier = Modifier.basicMarquee())
-                    Text(
-                        song.artist, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = .7f), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.clickable(enabled = song.artistId != null) { nav.go(Route.Open(Kind.Artist, song.artistId!!)) },
-                    )
-                }
-                HeartButton(Likes.isLiked(song), 26.dp) { Likes.toggle(song) }
+    val color = rememberCoverColor(song.coverArt)
+    val lyrics = rememberLoad("lyrics:${song.id}") { App.it.api.lyrics(song.id) }
+    val pos = rememberPosition(p, 200)
+    var showQueue by rememberSaveable { mutableStateOf(false) }
+
+    Column(
+        modifier.clip(RoundedCornerShape(18.dp))
+            .background(Brush.verticalGradient(0f to color, .55f to lerp(Bg, color, .25f), 1f to Surface)),
+    ) {
+        Row(Modifier.padding(start = 14.dp, top = 14.dp, end = 4.dp, bottom = 4.dp)) {
+            Cover(song.coverArt, 300, Modifier.size(88.dp).swipeToSkip(p, song).shadow(12.dp, RoundedCornerShape(10.dp)), RoundedCornerShape(10.dp))
+            Column(Modifier.weight(1f).padding(start = 14.dp, top = 2.dp)) {
+                Text(
+                    "PLAYING FROM ${(p.from ?: song.album).uppercase()}", style = MaterialTheme.typography.labelSmall, fontSize = 10.sp,
+                    letterSpacing = 1.sp, color = Color.White.copy(alpha = .6f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                Text(song.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.W700, fontSize = 18.sp, maxLines = 1, modifier = Modifier.padding(top = 4.dp).basicMarquee())
+                Text(
+                    song.artist, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = .7f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable(enabled = song.artistId != null) { nav.go(Route.Open(Kind.Artist, song.artistId!!)) },
+                )
+            }
+            Column {
+                HeartButton(Likes.isLiked(song), 24.dp) { Likes.toggle(song) }
                 SongMenu(song, Color.White)
             }
-            Seek(p, song, pos)
-            Controls(p, play = 56.dp)
+        }
+        Seek(p, song, pos, inset = 16.dp, inline = true)
+        Controls(p, play = 52.dp, inset = 8.dp, vertical = 0.dp)
+        Row(
+            Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color.Black.copy(alpha = .25f)).padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            @Composable
+            fun seg(label: String, on: Boolean, onClick: () -> Unit) = Box(
+                Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(if (on) Color.White.copy(alpha = .14f) else Color.Transparent)
+                    .clickable(onClick = onClick).padding(vertical = 6.dp),
+                contentAlignment = Alignment.Center,
+            ) { Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.W700, color = if (on) Color.White else Sub) }
+            seg("Lyrics", !showQueue) { showQueue = false }
+            seg("Up next", showQueue) { showQueue = true }
+        }
+        // Rows fade out at the top and bottom edges instead of being cut off.
+        val fade = Modifier.weight(1f).fillMaxWidth().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawWithContent {
+            drawContent()
+            drawRect(Brush.verticalGradient(0f to Color.Transparent, .08f to Color.Black, .88f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
+        }
+        val l = lyrics.data
+        when {
+            showQueue -> LazyColumn(fade, contentPadding = PaddingValues(vertical = 8.dp)) {
+                if (p.upNext.isEmpty()) item { Hint("Nothing queued") }
+                itemsIndexed(p.upNext, key = { _, (i, s) -> "$i:${s.id}" }) { _, (i, s) -> QueueRow(p, i, s, Modifier.animateItem(), start = 16.dp, cover = 40.dp) }
+            }
+            l == null -> Box(fade) { Hint(if (lyrics.loading) "" else "No lyrics for this song") }
+            else -> LyricLines(p, l, pos, fade)
+        }
+    }
+}
+
+@Composable
+private fun Hint(text: String) = Text(text, style = MaterialTheme.typography.bodyMedium, color = Sub, modifier = Modifier.padding(16.dp))
+
+@Composable
+private fun LyricLines(p: PlayerState, l: xyz.yuuki.navidroid.Lyrics, pos: Long, modifier: Modifier) {
+    val current = if (l.synced) l.lines.indexOfLast { it.ms <= pos } else -1
+    val list = rememberLazyListState()
+    LaunchedEffect(current) { if (current >= 0) list.animateScrollToItem((current - 1).coerceAtLeast(0)) }
+    LazyColumn(modifier, state = list, contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)) {
+        itemsIndexed(l.lines) { i, line ->
+            Text(
+                line.text.ifBlank { "♪" },
+                fontSize = 18.sp, lineHeight = 24.sp, fontWeight = FontWeight.W700,
+                color = when {
+                    !l.synced || i == current -> Color.White
+                    i < current -> Color.White.copy(alpha = .65f)
+                    else -> Color.White.copy(alpha = .4f)
+                },
+                modifier = Modifier.fillMaxWidth().clickable(enabled = l.synced) { p.c.seekTo(line.ms) }.padding(vertical = 4.dp),
+            )
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Seek(p: PlayerState, song: Song, pos: Long, inset: Dp = 16.dp) {
+private fun Seek(p: PlayerState, song: Song, pos: Long, inset: Dp = 16.dp, inline: Boolean = false) {
     var dragging by remember { mutableStateOf<Float?>(null) }
     val dur = (p.c.duration.takeIf { it > 0 } ?: (song.duration * 1000L)).toFloat()
     val value = dragging ?: (pos / dur).coerceIn(0f, 1f)
-    Column(Modifier.padding(horizontal = inset)) {
+    val slider = @Composable { m: Modifier ->
         Slider(
             value = value,
             onValueChange = { dragging = it },
@@ -430,6 +457,7 @@ private fun Seek(p: PlayerState, song: Song, pos: Long, inset: Dp = 16.dp) {
                 dragging?.let { p.c.seekTo((it * dur).toLong()) }
                 dragging = null
             },
+            modifier = m,
             colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = .25f)),
             thumb = { Box(Modifier.size(14.dp).clip(CircleShape).background(Color.White)) },
             track = { st ->
@@ -438,17 +466,27 @@ private fun Seek(p: PlayerState, song: Song, pos: Long, inset: Dp = 16.dp) {
                 }
             },
         )
+    }
+    val elapsed = @Composable { Text(formatTime((value * dur).toLong()), style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = .7f)) }
+    val total = @Composable { Text(formatTime(dur.toLong()), style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = .7f)) }
+    // Inline puts the times either side of the bar, for the short landscape card.
+    if (inline) Row(Modifier.padding(horizontal = inset), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        elapsed()
+        slider(Modifier.weight(1f))
+        total()
+    } else Column(Modifier.padding(horizontal = inset)) {
+        slider(Modifier)
         Row(Modifier.padding(horizontal = 8.dp)) {
-            Text(formatTime((value * dur).toLong()), style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = .7f))
+            elapsed()
             Spacer(Modifier.weight(1f))
-            Text(formatTime(dur.toLong()), style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = .7f))
+            total()
         }
     }
 }
 
 @Composable
-private fun Controls(p: PlayerState, play: Dp = 68.dp, inset: Dp = 16.dp) = Row(
-    Modifier.fillMaxWidth().padding(horizontal = inset, vertical = 8.dp),
+private fun Controls(p: PlayerState, play: Dp = 68.dp, inset: Dp = 16.dp, vertical: Dp = 8.dp) = Row(
+    Modifier.fillMaxWidth().padding(horizontal = inset, vertical = vertical),
     horizontalArrangement = Arrangement.SpaceBetween,
     verticalAlignment = Alignment.CenterVertically,
 ) {

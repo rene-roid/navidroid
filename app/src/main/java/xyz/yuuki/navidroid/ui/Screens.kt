@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -79,11 +81,18 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.text.style.Hyphens
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -162,14 +171,18 @@ fun HomeScreen() {
         home.refresh()
     }
     PullToRefreshBox(home.loading && home.data != null, refresh, Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color(0xFF2E2745), .35f to Bg))) {
+        LazyColumn(Modifier.fillMaxSize().then(if (isWide()) Modifier else Modifier.background(Brush.verticalGradient(0f to HomeTint, .35f to Bg)))) {
             item("top") {
-                Row(Modifier.statusBarsPadding().padding(start = 16.dp, end = 4.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                // In landscape downloads and settings live in the rail.
+                val wide = isWide()
+                Row(Modifier.statusBarsPadding().padding(start = 16.dp, end = 4.dp, top = 12.dp).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                     Avatar(34.dp) { nav.go(Route.Settings) }
                     Spacer(Modifier.width(12.dp))
                     Text(home.data?.greeting ?: "Hello", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
-                    IconButton({ nav.go(Route.Downloads) }) { Icon(Icons.Rounded.DownloadForOffline, "Downloads") }
-                    IconButton({ nav.go(Route.Settings) }) { Icon(Icons.Rounded.Settings, "Settings") }
+                    if (!wide) {
+                        IconButton({ nav.go(Route.Downloads) }) { Icon(Icons.Rounded.DownloadForOffline, "Downloads") }
+                        IconButton({ nav.go(Route.Settings) }) { Icon(Icons.Rounded.Settings, "Settings") }
+                    }
                 }
             }
             if (!online || (home.data == null && home.error != null)) item("offline") { OfflineHome(pinnedTiles(pins)) }
@@ -204,8 +217,10 @@ private fun OfflineHome(tiles: List<Tile>) = Column(Modifier.padding(16.dp)) {
 @Composable
 private fun QuickGrid(tiles: List<Tile>, modifier: Modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
     val nav = LocalNav.current
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        tiles.chunked(2).forEach { row ->
+    BoxWithConstraints(modifier) {
+    val cols = (maxWidth / 180.dp).toInt().coerceAtLeast(2)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        tiles.chunked(cols).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 row.forEach { t ->
                     Row(
@@ -219,9 +234,10 @@ private fun QuickGrid(tiles: List<Tile>, modifier: Modifier = Modifier.padding(h
                         )
                     }
                 }
-                if (row.size == 1) Spacer(Modifier.weight(1f))
+                repeat(cols - row.size) { Spacer(Modifier.weight(1f)) }
             }
         }
+    }
     }
 }
 
@@ -552,15 +568,18 @@ fun CollectionScreen(kind: Kind, id: String) {
     val list = rememberLazyListState()
     val collapsed by remember { derivedStateOf { list.firstVisibleItemIndex > 0 || list.firstVisibleItemScrollOffset > 600 } }
     val wide = isWide()
+    val nav = LocalNav.current
+    LaunchedEffect(color) { nav.tints[Route.Open(kind, id)] = color }
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), state = list) {
             item("header") {
                 Column(
-                    Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(color, Bg))).statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp),
+                    Modifier.fillMaxWidth().then(if (wide) Modifier else Modifier.background(Brush.verticalGradient(listOf(color, Bg))))
+                        .statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp),
                 ) {
                     val mosaic = remember(c) { c?.takeIf { kind == Kind.Genre }?.songs?.mapNotNull { it.coverArt }?.distinct()?.take(4)?.takeIf { it.size == 4 } }
-                    val coverMod = Modifier.size(if (wide) 160.dp else 240.dp).shadow(20.dp, RoundedCornerShape(6.dp))
+                    val coverMod = Modifier.size(if (wide) 128.dp else 240.dp).shadow(20.dp, RoundedCornerShape(6.dp))
                     val cover = @Composable { if (mosaic != null) CoverMosaic(mosaic, coverMod) else TileCover(kind, id, c?.coverArt, c?.mix, coverMod, 600) }
                     if (wide) Row(verticalAlignment = Alignment.Bottom) {
                         cover()
@@ -610,7 +629,11 @@ private fun CoverMosaic(ids: List<String>, modifier: Modifier) = Column(modifier
 @Composable
 private fun CollectionInfo(kind: Kind, c: Collection?) {
     val nav = LocalNav.current
-    Text(c?.title ?: "", style = MaterialTheme.typography.headlineMedium)
+    // Long words hyphenate instead of breaking mid-word in the narrow landscape column.
+    Text(
+        c?.title ?: "", style = MaterialTheme.typography.headlineMedium.copy(hyphens = Hyphens.Auto, lineBreak = LineBreak.Heading),
+        maxLines = 3, overflow = TextOverflow.Ellipsis,
+    )
     c?.description?.let { Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp), maxLines = 3, overflow = TextOverflow.Ellipsis) }
     if (c != null) Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         c.by?.let { by ->
@@ -638,8 +661,15 @@ fun ErrorText(msg: String) = Text(msg, Modifier.fillMaxWidth().padding(32.dp), s
 @Composable
 private fun TopBar(title: String, color: Color, solid: Boolean) {
     val nav = LocalNav.current
-    val bg = if (solid) Modifier.background(androidx.compose.ui.graphics.lerp(color, Color.Black, .45f))
-    else Modifier.background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .35f), Color.Transparent)))
+    val bg = when {
+        // In landscape it paints exactly the shell's background (the tint fading to Bg over the top 35% of the window), so it has no edges.
+        isWide() -> if (solid) {
+            val h = LocalWindowInfo.current.containerSize.height * .35f
+            Modifier.background(Brush.verticalGradient(listOf(color, Bg), startY = 0f, endY = h))
+        } else Modifier
+        solid -> Modifier.background(androidx.compose.ui.graphics.lerp(color, Color.Black, .45f))
+        else -> Modifier.background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .35f), Color.Transparent)))
+    }
     Column(Modifier.fillMaxWidth().then(bg)) {
         Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
         Row(Modifier.height(56.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -680,13 +710,27 @@ fun ArtistScreen(id: String) {
     val image = a?.albums?.maxByOrNull { it.playCount }?.coverArt ?: a?.artist?.coverArt
     val color = rememberCoverColor(image)
     val scope = rememberCoroutineScope()
+    val nav = LocalNav.current
+    LaunchedEffect(color) { nav.tints[Route.Open(Kind.Artist, id)] = color }
+    val wide = isWide()
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), state = list) {
             item("header") {
-                Box(Modifier.fillMaxWidth().height(if (isWide()) 220.dp else 340.dp)) {
-                    Cover(image, 600, Modifier.fillMaxSize(), RoundedCornerShape(0.dp))
-                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Transparent, .55f to Color.Transparent, 1f to Bg)))
+                Box(Modifier.fillMaxWidth().height(if (wide) 220.dp else 340.dp)) {
+                    // In landscape the photo fades out at the sides and bottom into the shared background instead of meeting it at an edge.
+                    if (wide) Cover(
+                        image, 600,
+                        Modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawWithContent {
+                            drawContent()
+                            drawRect(Brush.horizontalGradient(0f to Color.Transparent, .12f to Color.Black, .88f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
+                            drawRect(Brush.verticalGradient(.45f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
+                        },
+                        RoundedCornerShape(0.dp),
+                    ) else {
+                        Cover(image, 600, Modifier.fillMaxSize(), RoundedCornerShape(0.dp))
+                        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Transparent, .55f to Color.Transparent, 1f to Bg)))
+                    }
                     Text(
                         a?.artist?.name ?: "", style = MaterialTheme.typography.displaySmall, fontSize = 40.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.align(Alignment.BottomStart).padding(16.dp),

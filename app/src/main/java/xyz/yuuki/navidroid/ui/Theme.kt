@@ -24,6 +24,7 @@ val Green = Color(0xFF1DB954)
 val GreenLight = Color(0xFF1ED760)
 val Sub = Color(0xFFB3B3B3)
 val Faint = Color(0xFF7A7A7A)
+val HomeTint = Color(0xFF2E2745)
 
 private fun figtree(weight: Int) = Font(R.font.figtree, FontWeight(weight), variationSettings = FontVariation.Settings(FontVariation.weight(weight)))
 
