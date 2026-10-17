@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -97,6 +98,9 @@ import kotlin.math.abs
 class PlayerState(val c: MediaController) : Player.Listener {
     var song by mutableStateOf<Song?>(null)
     var isPlaying by mutableStateOf(false)
+
+    /** Wants to play but is still fetching audio. */
+    var loading by mutableStateOf(false)
     var shuffle by mutableStateOf(false)
     var repeat by mutableStateOf(Player.REPEAT_MODE_OFF)
     var from by mutableStateOf<String?>(null)
@@ -114,6 +118,7 @@ class PlayerState(val c: MediaController) : Player.Listener {
 
     private fun sync(events: Player.Events?) {
         isPlaying = c.isPlaying
+        loading = c.playWhenReady && c.playbackState == Player.STATE_BUFFERING
         shuffle = c.shuffleModeEnabled
         repeat = c.repeatMode
         from = c.playlistMetadata.title?.toString()
@@ -196,7 +201,8 @@ fun MiniPlayer(p: PlayerState, onOpen: () -> Unit) {
                 Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Like", tint = if (liked) Green else Color.White)
             }
             IconButton(p::toggle) {
-                Icon(if (p.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/pause", Modifier.size(30.dp), tint = Color.White)
+                if (p.loading) CircularProgressIndicator(Modifier.size(24.dp), Color.White, 2.5.dp)
+                else Icon(if (p.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/pause", Modifier.size(30.dp), tint = Color.White)
             }
         }
         val dur = song.duration * 1000f
@@ -517,7 +523,8 @@ private fun SkipButton(p: PlayerState, next: Boolean, icon: Dp) = IconButton({ i
 
 @Composable
 private fun PlayPause(p: PlayerState, size: Dp) = Box(Modifier.size(size).clip(CircleShape).background(Color.White).clickable(onClick = p::toggle), contentAlignment = Alignment.Center) {
-    Icon(if (p.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/pause", Modifier.size(size * .6f), tint = Color.Black)
+    if (p.loading) CircularProgressIndicator(Modifier.size(size * .45f), Color.Black, 3.dp)
+    else Icon(if (p.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/pause", Modifier.size(size * .6f), tint = Color.Black)
 }
 
 @Composable

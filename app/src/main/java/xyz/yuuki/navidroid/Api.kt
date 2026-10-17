@@ -269,10 +269,13 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
 
     fun coverUrl(id: String, size: Int) = url("getCoverArt", listOf("id" to id, "size" to size))
 
-    /** Transcoded streams have no length unless Navidrome estimates one, and without it they can't be seeked. */
+    /**
+     * Constant-bitrate MP3, which starts fast and seeks without knowing its length. No length estimate:
+     * Navidrome's default Opus outgrows it, and the player stops at the estimate, cutting songs short.
+     */
     fun streamUrl(id: String, maxBitRate: Int) = url(
         "stream",
-        if (maxBitRate > 0) listOf("id" to id, "maxBitRate" to maxBitRate, "estimateContentLength" to true) else listOf("id" to id),
+        if (maxBitRate > 0) listOf("id" to id, "maxBitRate" to maxBitRate, "format" to "mp3") else listOf("id" to id),
     )
 
     /**
@@ -471,7 +474,8 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
     fun networkChanged(available: Boolean) {
         lastFailedRace = 0
         // Pooled connections belong to the old network and would hang until they time out.
-        http.connectionPool.evictAll()
+        // Closing a TLS socket writes to it, so not on the main thread (pull to refresh calls this).
+        scope.launch(Dispatchers.IO) { http.connectionPool.evictAll() }
         if (!available) online.value = false
     }
 

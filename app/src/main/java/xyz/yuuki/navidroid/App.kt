@@ -44,9 +44,19 @@ class App : Application(), SingletonImageLoader.Factory {
         })
     }
 
+    /**
+     * Not on Wi-Fi. Looks past the VPN, which counts as metered when Tailscale happens to ride on
+     * mobile data, even while the phone is on Wi-Fi and the music comes over it.
+     */
+    @Suppress("DEPRECATION")
     val metered: Boolean
         get() = getSystemService(ConnectivityManager::class.java).run {
-            getNetworkCapabilities(activeNetwork)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) != true
+            allNetworks.none { n ->
+                getNetworkCapabilities(n)?.run {
+                    hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) && hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
+                        !hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+                } == true
+            }
         }
 
     val streamBitrate get() = if (metered) prefs.streamBitrateMobile else prefs.streamBitrateWifi

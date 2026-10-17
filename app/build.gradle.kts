@@ -47,6 +47,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.session)
+    implementation(libs.media3.okhttp)
     implementation(libs.navigation3.ui)
     implementation(libs.coil.compose)
     implementation(libs.coil.okhttp)

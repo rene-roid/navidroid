@@ -4,7 +4,7 @@ import android.app.Notification
 import android.net.Uri
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSpec
-import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheWriter
@@ -63,10 +63,8 @@ class Offline(private val app: App) {
     private val snapshots = File(app.filesDir, "collections").apply { mkdirs() }
 
     private val upstream = ResolvingDataSource.Factory(
-        DefaultHttpDataSource.Factory()
-            .setConnectTimeoutMs(8_000)
-            .setReadTimeoutMs(20_000)
-            .setAllowCrossProtocolRedirects(true),
+        // The API's client: songs reuse its warm connections instead of a fresh TCP and TLS handshake each.
+        OkHttpDataSource.Factory(app.api.http),
     ) { spec ->
         val u = spec.uri
         if (u.scheme != "navidroid") spec
@@ -76,10 +74,13 @@ class Offline(private val app: App) {
         ))
     }
 
-    /** Keyed by bitrate too, so a song cached on mobile data doesn't stick at that quality on Wi-Fi. */
+    /**
+     * Keyed by bitrate too, so a song cached on mobile data doesn't stick at that quality on Wi-Fi.
+     * "mp3" leaves behind the entries cut short by the old length estimates.
+     */
     private val streamed = CacheDataSource.Factory()
         .setCache(streamCache)
-        .setCacheKeyFactory { "${it.key ?: it.uri}@${app.streamBitrate}" }
+        .setCacheKeyFactory { "${it.key ?: it.uri}@${app.streamBitrate}mp3" }
         .setUpstreamDataSourceFactory(upstream)
 
     /** Reads downloaded songs from disk, then songs already streamed or preloaded, and streams the rest. */

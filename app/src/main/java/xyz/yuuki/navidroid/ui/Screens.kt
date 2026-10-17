@@ -704,6 +704,7 @@ fun ArtistScreen(id: String) {
     val player = LocalPlayer.current
     val load = rememberLoad("artist:$id") { api.artist(id) }
     val a = load.data
+    LaunchedEffect(a) { a?.let { App.it.offline.warm(it.top) } }
     val list = rememberLazyListState()
     val collapsed by remember { derivedStateOf { list.firstVisibleItemIndex > 0 } }
     // Like the web UI: most artists have no photo, so show their most played album.
