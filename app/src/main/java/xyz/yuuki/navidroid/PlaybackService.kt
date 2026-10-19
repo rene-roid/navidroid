@@ -4,7 +4,11 @@ import android.app.PendingIntent
 import android.graphics.Bitmap
 import android.content.Intent
 import android.net.Uri
+import android.view.KeyEvent
+import androidx.core.content.IntentCompat
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -13,6 +17,7 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.BitmapLoader
+import androidx.media3.common.util.Util
 import androidx.media3.datasource.DataSourceBitmapLoader
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
@@ -54,6 +59,9 @@ fun Song.toMediaItem(): MediaItem {
             MediaMetadata.Builder()
                 .setTitle(title)
                 .setArtist(artist)
+                // Some system UIs (HyperOS, Bluetooth displays) only read the display fields.
+                .setDisplayTitle(title)
+                .setSubtitle(artist)
                 .setAlbumTitle(album)
                 .setArtworkUri(art)
                 .setDurationMs(duration * 1000L)
@@ -71,6 +79,8 @@ class PlaybackService : MediaSessionService() {
     private var session: MediaSession? = null
     private val scope = MainScope()
     private val queueFile by lazy { File(filesDir, "queue.json") }
+    private val buttons = Handler(Looper.getMainLooper())
+    private var presses = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -125,6 +135,26 @@ class PlaybackService : MediaSessionService() {
                 // Controllers don't send URIs across the binder; every song's URI derives from its id.
                 override fun onAddMediaItems(session: MediaSession, controller: MediaSession.ControllerInfo, items: MutableList<MediaItem>) =
                     Futures.immediateFuture(items.map { it.buildUpon().setUri(songUri(it.mediaId)).setCustomCacheKey(it.mediaId).build() })
+
+                // Headset button: one press toggles, two skip to the next song, three go back.
+                override fun onMediaButtonEvent(session: MediaSession, controller: MediaSession.ControllerInfo, intent: Intent): Boolean {
+                    val key = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_KEY_EVENT, KeyEvent::class.java) ?: return false
+                    if (key.keyCode != KeyEvent.KEYCODE_HEADSETHOOK && key.keyCode != KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) return false
+                    if (controller.controllerVersion != MediaSession.ControllerInfo.LEGACY_CONTROLLER_VERSION) return false
+                    if (key.action == KeyEvent.ACTION_DOWN && key.repeatCount == 0) {
+                        presses++
+                        buttons.removeCallbacksAndMessages(null)
+                        buttons.postDelayed({
+                            when (presses) {
+                                1 -> Util.handlePlayPauseButtonAction(player)
+                                2 -> player.seekToNext()
+                                else -> player.seekToPrevious()
+                            }
+                            presses = 0
+                        }, 400)
+                    }
+                    return true
+                }
             })
             .build()
 
@@ -140,6 +170,7 @@ class PlaybackService : MediaSessionService() {
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
 
     override fun onDestroy() {
+        buttons.removeCallbacksAndMessages(null)
         session?.run {
             saveQueue(player)
             player.release()

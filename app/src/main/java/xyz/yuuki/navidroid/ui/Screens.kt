@@ -80,6 +80,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawWithContent
@@ -270,12 +272,19 @@ fun BackTitle(title: String) = Row(Modifier.statusBarsPadding().padding(vertical
 fun SearchScreen() {
     val nav = LocalNav.current
     val player = LocalPlayer.current
-    var q by rememberSaveable { mutableStateOf("") }
+    var field by rememberSaveable(stateSaver = androidx.compose.ui.text.input.TextFieldValue.Saver) { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue()) }
+    val q = field.text
+    // Focusing the box selects what's there so typing replaces it. The tap that focuses it then
+    // places the cursor, so the first selection-only change after focus is turned back into select-all.
+    var selectOnFocus by remember { mutableStateOf(false) }
+    fun selectAll(v: androidx.compose.ui.text.input.TextFieldValue) = v.copy(selection = androidx.compose.ui.text.TextRange(0, v.text.length))
     var result by remember { mutableStateOf<xyz.yuuki.navidroid.SearchResult?>(null) }
+    var searched by remember { mutableStateOf("") }
     LaunchedEffect(q) {
         if (q.isBlank()) return@LaunchedEffect run { result = null }
         delay(250)
         result = runCatching { api.search(q.trim()) }.getOrNull()
+        searched = q
     }
     val genres = rememberLoad("genres") { api.genres() }
     // Tapping the Search tab again jumps into the search box.
@@ -285,6 +294,11 @@ fun SearchScreen() {
     LaunchedEffect(nav.retap) {
         if (nav.retap != retapAtOpen) { focus.requestFocus(); keyboard?.show() }
     }
+    // Closing the keyboard with Back leaves the box focused; drop focus so the next tap selects again.
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+    val imeVisible = androidx.compose.foundation.layout.WindowInsets.isImeVisible
+    LaunchedEffect(imeVisible) { if (!imeVisible) focusManager.clearFocus() }
 
     LazyVerticalGrid(GridCells.Fixed(2), Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item(span = { GridItemSpan(maxLineSpan) }) {
@@ -298,9 +312,18 @@ fun SearchScreen() {
                     Spacer(Modifier.width(10.dp))
                     Box(Modifier.weight(1f)) {
                         if (q.isEmpty()) Text("What do you want to listen to?", color = Color(0xFF6A6A6A), style = MaterialTheme.typography.bodyLarge)
-                        BasicTextField(q, { q = it }, singleLine = true, textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.Black), cursorBrush = SolidColor(Color.Black), modifier = Modifier.fillMaxWidth().focusRequester(focus))
+                        BasicTextField(
+                            field,
+                            { field = if (selectOnFocus && it.text == field.text) selectAll(it) else it; selectOnFocus = false },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.Black),
+                            cursorBrush = SolidColor(Color.Black),
+                            modifier = Modifier.fillMaxWidth().focusRequester(focus).onFocusChanged {
+                                if (it.isFocused && field.text.isNotEmpty()) { field = selectAll(field); selectOnFocus = true }
+                            },
+                        )
                     }
-                    if (q.isNotEmpty()) IconButton({ q = "" }) { Icon(Icons.Rounded.Close, "Clear", tint = Color.Black) }
+                    if (q.isNotEmpty()) IconButton({ field = androidx.compose.ui.text.input.TextFieldValue() }) { Icon(Icons.Rounded.Close, "Clear", tint = Color.Black) }
                 }
             }
         }
@@ -310,7 +333,11 @@ fun SearchScreen() {
             items(genres.data.orEmpty().take(60), key = { it.name }) { GenreCard(it) }
         } else {
             val genreHits = genres.data.orEmpty().filter { it.name.contains(q.trim(), ignoreCase = true) }.take(4)
-            items(rankHits(q, genreHits, r?.artists.orEmpty(), r?.albums.orEmpty(), r?.songs.orEmpty()), key = { hitKey(it) }, span = { GridItemSpan(maxLineSpan) }) { h ->
+            val hits = rankHits(q, genreHits, r?.artists.orEmpty(), r?.albums.orEmpty(), r?.songs.orEmpty())
+            if (r != null && searched == q && hits.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
+                Text("No results for \"${q.trim()}\"", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 24.dp))
+            }
+            items(hits, key = { hitKey(it) }, span = { GridItemSpan(maxLineSpan) }) { h ->
                 when (h) {
                     is xyz.yuuki.navidroid.Genre -> ListRow(h.name, "Genre", { GenreThumb(h.name) }) { nav.go(Route.Open(Kind.Genre, h.name)) }
                     is xyz.yuuki.navidroid.Artist -> ListRow(h.name, "Artist", { Cover(h.coverArt, 120, Modifier.size(48.dp), CircleShape) }) { nav.go(Route.Open(Kind.Artist, h.id)) }
