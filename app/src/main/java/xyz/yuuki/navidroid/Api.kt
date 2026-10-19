@@ -8,6 +8,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -41,6 +43,8 @@ data class Song(
     val starred: Boolean,
     val suffix: String?,
     val bitRate: Int,
+    /** Every credited artist as (id, name), when the server lists them. */
+    val artists: List<Pair<String, String>> = emptyList(),
 ) {
     /** Same field names as the Subsonic response, so [from] reads both API and saved JSON. */
     fun toJson(): JSONObject = JSONObject()
@@ -48,6 +52,7 @@ data class Song(
         .put("album", album).put("albumId", albumId).put("coverArt", coverArt)
         .put("duration", duration).put("track", track).put("year", year)
         .put("suffix", suffix).put("bitRate", bitRate)
+        .put("artists", JSONArray(artists.map { JSONObject().put("id", it.first).put("name", it.second) }))
         .apply { if (starred) put("starred", "1") }
 
     companion object {
@@ -65,6 +70,7 @@ data class Song(
             starred = o.has("starred"),
             suffix = o.s("suffix"),
             bitRate = o.optInt("bitRate"),
+            artists = o.optJSONArray("artists").objects().mapNotNull { a -> a.s("id")?.let { it to (a.s("name") ?: "") } },
         )
     }
 }
@@ -72,6 +78,7 @@ data class Song(
 data class Album(
     val id: String, val name: String, val artist: String, val artistId: String?,
     val coverArt: String?, val year: Int, val songCount: Int, val playCount: Int, val starred: Boolean = false,
+    val single: Boolean = false,
 ) {
     companion object {
         fun from(o: JSONObject) = Album(
@@ -84,7 +91,12 @@ data class Album(
             songCount = o.optInt("songCount"),
             playCount = o.optInt("playCount"),
             starred = o.has("starred"),
+            single = isSingle(o.optJSONArray("releaseTypes")?.let { t -> List(t.length()) { t.optString(it) } }.orEmpty(), o.optInt("songCount"), o.optInt("duration")),
         )
+
+        /** Tagged release type when there is one, otherwise Spotify's rule: up to 6 songs and under 30 minutes. */
+        fun isSingle(types: List<String>, songs: Int, seconds: Int) =
+            if (types.isNotEmpty()) types.any { it.equals("single", true) || it.equals("ep", true) } else songs in 1..6 && seconds < 1800
     }
 }
 
@@ -146,7 +158,7 @@ data class Collection(
     }
 }
 
-data class ArtistPage(val artist: Artist, val albums: List<Album>, val top: List<Song>)
+data class ArtistPage(val artist: Artist, val albums: List<Album>, val top: List<Song>, val appearsOn: List<Album> = emptyList())
 data class SearchResult(val artists: List<Artist>, val albums: List<Album>, val songs: List<Song>)
 data class Genre(val name: String, val songCount: Int)
 data class LyricLine(val ms: Long, val text: String)
@@ -157,6 +169,10 @@ class ApiException(message: String) : Exception(message)
 fun JSONObject.s(k: String): String? = if (isNull(k)) null else optString(k)
 fun JSONArray?.objects(): List<JSONObject> = if (this == null) emptyList() else List(length()) { getJSONObject(it) }
 fun JSONObject.list(k: String): List<JSONObject> = optJSONArray(k).objects()
+
+/** "A, B & C (feat. D)" → [A, B, C, D]. */
+fun artistNames(credit: String): List<String> =
+    credit.split(Regex("""\s*(?:[,&/;()]|\bfeat\b\.?|\bft\b\.?)\s*""", RegexOption.IGNORE_CASE)).map { it.trim() }.filter { it.isNotEmpty() }.distinct()
 
 // ---- settings -------------------------------------------------------------------------------
 
@@ -405,8 +421,41 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
         val top = runCatching {
             call("getTopSongs", "artist" to artist.name, "count" to 10).optJSONObject("topSongs")?.list("song")?.map(Song::from)
         }.getOrNull().orEmpty()
-        ArtistPage(artist, o.list("album").map(Album::from).sortedByDescending { it.year }, top)
+        val own = o.list("album").map(Album::from)
+        // getArtist only lists albums credited to this artist. Their songs on releases credited to someone
+        // else (a duo, a label, a compilation) are found by searching; a release made only of their songs is theirs.
+        val songs = runCatching {
+            call("search3", "query" to artist.name, "artistCount" to 0, "albumCount" to 0, "songCount" to 200)
+                .optJSONObject("searchResult3")?.list("song")?.filter { it.isBy(id) }
+        }.getOrNull().orEmpty()
+        val known = own.map { it.id }.toSet()
+        // ponytail: one getAlbum per extra release, capped at 20; fine for featured artists, not for prolific session players.
+        val extra = coroutineScope {
+            songs.mapNotNull { it.s("albumId") }.distinct().filter { it !in known }.take(20)
+                .map { async { runCatching { call("getAlbum", "id" to it).getJSONObject("album") }.getOrNull() } }
+                .mapNotNull { it.await() }
+        }
+        val (theirs, others) = extra.partition { a -> a.list("song").all { it.isBy(id) } }
+        ArtistPage(
+            artist, (own + theirs.map(Album::from)).sortedByDescending { it.year },
+            top.ifEmpty { songs.map(Song::from).take(10) }, others.map(Album::from).sortedByDescending { it.year },
+        )
     }
+
+    /**
+     * Everyone on a song: the artists the server lists, plus each name in "A, B & C feat. D" that is an
+     * artist of its own, since servers often keep such credits as one combined artist.
+     */
+    suspend fun songArtists(song: Song): List<Artist> = coroutineScope {
+        val listed = song.artists.ifEmpty { listOfNotNull(song.artistId?.let { it to song.artist }) }
+        val names = listed.map { it.second.lowercase() }.toSet()
+        val split = artistNames(song.artist).filter { it.lowercase() !in names }
+            .map { async { runCatching { findArtist(it) }.getOrNull() } }.awaitAll().filterNotNull()
+        (listed.map { (id, name) -> Artist(id, name, "ar-$id", 0) } + split).distinctBy { it.id }
+    }
+
+    private fun JSONObject.isBy(artistId: String) =
+        s("artistId") == artistId || optJSONArray("artists").objects().any { it.s("id") == artistId }
 
     suspend fun artistSongs(page: ArtistPage): List<Song> = page.albums.flatMap { collection(Kind.Album, it.id).songs }
 

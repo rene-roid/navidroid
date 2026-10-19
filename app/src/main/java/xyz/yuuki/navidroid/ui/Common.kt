@@ -409,6 +409,7 @@ fun SongMenu(song: Song, tint: Color = Sub) {
     val player = LocalPlayer.current
     var open by remember { mutableStateOf(false) }
     var pick by remember { mutableStateOf(false) }
+    val goToArtist = rememberGoToArtist()
     Box {
         IconButton({ open = true }) { Icon(Icons.Rounded.MoreVert, "More", tint = tint) }
         DropdownMenu(open, { open = false }, containerColor = Elevated) {
@@ -422,10 +423,49 @@ fun SongMenu(song: Song, tint: Color = Sub) {
             item("Add to queue", Icons.AutoMirrored.Rounded.QueueMusic) { player?.enqueue(listOf(song)) }
             item("Add to playlist", Icons.AutoMirrored.Rounded.PlaylistAdd) { pick = true }
             song.albumId?.let { id -> item("Go to album", Icons.Rounded.Album) { nav.go(Route.Open(Kind.Album, id)) } }
-            song.artistId?.let { id -> item("Go to artist", Icons.Rounded.Person) { nav.go(Route.Open(Kind.Artist, id)) } }
+            if (song.artistId != null) item("Go to artist", Icons.Rounded.Person) { goToArtist(song) }
         }
     }
     if (pick) AddToPlaylist(listOf(song)) { pick = false }
+}
+
+/** Opens a song's artist, or asks which one when it has several. [before] runs right before leaving (closes the player). */
+@Composable
+fun rememberGoToArtist(before: () -> Unit = {}): (Song) -> Unit {
+    val nav = LocalNav.current
+    val scope = rememberCoroutineScope()
+    var choices by remember { mutableStateOf<List<xyz.yuuki.navidroid.Artist>>(emptyList()) }
+    fun go(id: String) {
+        choices = emptyList()
+        before()
+        nav.go(Route.Open(Kind.Artist, id))
+    }
+    if (choices.isNotEmpty()) AlertDialog(
+        onDismissRequest = { choices = emptyList() },
+        containerColor = Elevated,
+        title = { Text("Choose artist") },
+        text = {
+            Column {
+                choices.forEach { a ->
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).clickable { go(a.id) }.padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Cover(a.coverArt, 120, Modifier.size(44.dp), CircleShape)
+                        Text(a.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton({ choices = emptyList() }) { Text("Cancel", color = Sub) } },
+    )
+    return { song ->
+        scope.launch {
+            val all = runCatching { App.it.api.songArtists(song) }.getOrNull().orEmpty()
+            if (all.size > 1) choices = all else (all.firstOrNull()?.id ?: song.artistId)?.let(::go)
+        }
+    }
 }
 
 @Composable

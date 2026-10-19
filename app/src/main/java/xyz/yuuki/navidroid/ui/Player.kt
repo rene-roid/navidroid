@@ -221,6 +221,7 @@ fun MiniPlayer(p: PlayerState, onOpen: () -> Unit) {
 fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
     val song = p.song ?: return
     val nav = LocalNav.current
+    val goToArtist = rememberGoToArtist(onClose)
     val color = rememberCoverColor(song.coverArt)
     val lyrics = rememberLoad("lyrics:${song.id}") { App.it.api.lyrics(song.id) }
     val pos = rememberPosition(p, 200)
@@ -239,10 +240,7 @@ fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
             }
             item("art") { SwipeArt(p, song) }
             item("info") {
-                SongInfo(song) {
-                    onClose()
-                    nav.go(Route.Open(Kind.Artist, song.artistId!!))
-                }
+                SongInfo(song) { goToArtist(song) }
             }
             item("seek") { Seek(p, song, pos) }
             item("controls") { Controls(p) }
@@ -366,6 +364,7 @@ private fun Modifier.swipeToSkip(p: PlayerState, song: Song): Modifier {
 fun DockedPlayer(p: PlayerState, modifier: Modifier = Modifier) {
     val song = p.song ?: return
     val nav = LocalNav.current
+    val goToArtist = rememberGoToArtist()
     val color = rememberCoverColor(song.coverArt)
     val lyrics = rememberLoad("lyrics:${song.id}") { App.it.api.lyrics(song.id) }
     val pos = rememberPosition(p, 200)
@@ -385,7 +384,7 @@ fun DockedPlayer(p: PlayerState, modifier: Modifier = Modifier) {
                 Text(song.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.W700, fontSize = 18.sp, maxLines = 1, modifier = Modifier.padding(top = 4.dp).basicMarquee())
                 Text(
                     song.artist, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = .7f), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.clickable(enabled = song.artistId != null) { nav.go(Route.Open(Kind.Artist, song.artistId!!)) },
+                    modifier = Modifier.clickable(enabled = song.artistId != null) { goToArtist(song) },
                 )
             }
             Column {

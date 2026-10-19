@@ -779,7 +779,7 @@ fun ArtistScreen(id: String) {
                 item("actions") {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         HeartButton(Likes.isLiked(a.artist.id, a.artist.starred)) { Likes.toggle(a.artist.id, a.artist.starred, "artistId") }
-                        Text("${a.albums.size} releases", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                        Text(if (a.albums.size == 1) "1 release" else "${a.albums.size} releases", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
                         IconButton({
                             scope.launch { runCatching { player?.play(api.artistSongs(a), shuffled = true, from = a.artist.name) } }
                         }) { Icon(Icons.Rounded.Shuffle, "Shuffle", Modifier.size(28.dp), tint = Sub) }
@@ -795,10 +795,11 @@ fun ArtistScreen(id: String) {
                         TrackRow(s, { player?.play(a.top, i, from = a.artist.name) }, number = i + 1)
                     }
                 }
-                item("disco") {
-                    SectionHeader("Discography")
+                val (singles, albums) = a.albums.partition { it.single }
+                for ((title, releases) in listOf("Albums" to albums, "Singles and EPs" to singles, "Appears on" to a.appearsOn)) if (releases.isNotEmpty()) item(title) {
+                    SectionHeader(title)
                     LazyRow(contentPadding = PaddingValues(horizontal = 10.dp)) {
-                        items(a.albums, key = { it.id }) { Card(it.tile()) }
+                        items(releases, key = { it.id }) { Card(it.tile()) }
                     }
                 }
             }
