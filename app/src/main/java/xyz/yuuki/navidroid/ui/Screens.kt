@@ -105,6 +105,18 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import androidx.compose.ui.unit.sp
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.drawText
+import android.os.Build
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.BlurEffect
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.layer.GraphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.exoplayer.offline.Download
 import kotlinx.coroutines.async
@@ -396,44 +408,94 @@ private fun GenreThumb(name: String) {
 private fun GenreCard(g: xyz.yuuki.navidroid.Genre) {
     val nav = LocalNav.current
     val art by androidx.compose.runtime.produceState<String?>(null, g.name) { value = runCatching { api.genreCover(g.name) }.getOrNull() }
-    GenreArt(g.name, art, Modifier.height(100.dp).clip(RoundedCornerShape(8.dp)).clickable { nav.go(Route.Open(Kind.Genre, g.name)) })
+    val bg = rememberGenreTint(g.name, art)
+    Box(Modifier.height(100.dp).clip(RoundedCornerShape(8.dp)).background(bg).clickable { nav.go(Route.Open(Kind.Genre, g.name)) }) {
+        // The cover again, blurred behind a wash that is solid under the title and thins out towards the art.
+        if (art != null) Cover(art, 200, Modifier.fillMaxSize().scale(1.3f).blur(10.dp), RoundedCornerShape(0.dp))
+        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(bg.copy(alpha = 0.92f), bg.copy(alpha = 0.6f), Color.Transparent))))
+        if (art != null) Cover(
+            art, 200,
+            Modifier.align(Alignment.BottomEnd).offset(x = 8.dp, y = 0.dp).size(78.dp).rotate(25f).shadow(10.dp, RoundedCornerShape(4.dp)),
+        )
+        Text(
+            g.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 56.dp),
+        )
+    }
 }
 
-/**
- * A genre's look on the browse cards and its header: the name over a tint of its cover, with the cover tilted in the corner.
- * The square [header] has more room, so its cover is bigger and hangs off the corner, and the name is bigger.
- */
+/** Tinted from the genre's cover so card and header match; the palette colour shows until it loads. */
 @Composable
-private fun GenreArt(name: String, art: String?, modifier: Modifier, header: Boolean = false) = androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
-    // Tinted from the cover so card and art match; the palette colour shows until it loads.
+private fun rememberGenreTint(name: String, art: String?): Color {
     // The cover colour is darkened for headers, so lift it back to one even, vivid brightness.
     val cover = rememberCoverColor(art, Color(xyz.yuuki.navidroid.paletteColor(name)))
-    val bg = remember(cover) {
+    return remember(cover) {
         val hsv = FloatArray(3).also { android.graphics.Color.colorToHSV(cover.toArgb(), it) }
         Color(android.graphics.Color.HSVToColor(floatArrayOf(hsv[0], hsv[1].coerceAtLeast(0.45f), 0.6f)))
     }
-    val h = maxHeight
-    val coverSize = if (header) h * 0.66f else 78.dp
-    val pad = if (header) h * 0.08f else 12.dp
-    Box(Modifier.fillMaxSize().background(bg)) {
-        if (header) {
-            // Big enough that a blurred cover turns to mud, so shade the tint instead: light behind the name, deep under the art.
-            Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(lerp(bg, Color.White, 0.12f), lerp(bg, Color.Black, 0.55f)))))
-        } else {
-            // The cover again, blurred behind a wash that is solid under the title and thins out towards the art.
-            if (art != null) Cover(art, 200, Modifier.fillMaxSize().scale(1.3f).blur(10.dp), RoundedCornerShape(0.dp))
-            Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(bg.copy(alpha = 0.92f), bg.copy(alpha = 0.6f), Color.Transparent))))
-        }
-        if (art != null) Cover(
-            art, if (header) 600 else 200,
-            Modifier.align(Alignment.BottomEnd).offset(x = coverSize * (if (header) 0.2f else 0.1f), y = coverSize * (if (header) 0.14f else 0f))
-                .size(coverSize).rotate(25f).shadow(coverSize / 8, RoundedCornerShape(4.dp)),
+}
+
+/**
+ * The card's cover first, then one per other album. Songs each carry their own cover id (`mf-…`) even within one album,
+ * and the card's is the album's (`al-<albumId>_…`), so they are told apart by album.
+ */
+private fun genreHand(c: Collection?) = listOfNotNull(c?.coverArt) + c?.songs.orEmpty()
+    .filter { it.albumId != null && c?.coverArt?.contains(it.albumId) != true }.distinctBy { it.albumId }.mapNotNull { it.coverArt }
+
+/** A genre's header: up to three of its covers fanned out like a hand of cards, over bands of its name sliding past. */
+@Composable
+private fun GenreHeader(name: String, covers: List<String>, modifier: Modifier) = BoxWithConstraints(modifier) {
+    val s = maxWidth
+    val bg = rememberGenreTint(name, covers.firstOrNull())
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val band = remember(name, s) {
+        measurer.measure(
+            name.uppercase() + "  ",
+            androidx.compose.ui.text.TextStyle(fontSize = (s.value * 0.2f).sp, fontWeight = FontWeight.Black, lineHeight = (s.value * 0.2f).sp),
         )
-        Text(
-            name, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold,
-            style = if (header) MaterialTheme.typography.headlineMedium.copy(fontSize = (h.value * 0.13f).sp, lineHeight = (h.value * 0.15f).sp)
-            else MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(start = pad, top = pad, end = if (header) pad else 56.dp),
+    }
+    val slide = androidx.compose.animation.core.rememberInfiniteTransition("bands").animateFloat(
+        0f, 1f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(14000, easing = androidx.compose.animation.core.LinearEasing)), "slide",
+    )
+    val stroke = with(LocalDensity.current) { androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx()) }
+    androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+        drawRect(Brush.linearGradient(listOf(lerp(bg, Color.White, 0.15f), lerp(bg, Color.Black, 0.6f))))
+        // Rows alternate filled and outlined and slide opposite ways; the phase is read here so only drawing repeats.
+        val w = band.size.width.toFloat()
+        val h = band.size.height * 0.92f
+        for (row in 0..(size.height / h).toInt()) {
+            val even = row % 2 == 0
+            var x = -w * (if (even) slide.value else 1f - slide.value) - (row % 3) * w / 3
+            while (x < size.width) {
+                drawText(
+                    band, Color.White, androidx.compose.ui.geometry.Offset(x, row * h - h * 0.15f),
+                    alpha = if (even) 0.1f else 0.28f, drawStyle = if (even) androidx.compose.ui.graphics.drawscope.Fill else stroke,
+                )
+                x += w
+            }
+        }
+    }
+    // Fanned out from a neat stack when the covers arrive. The first cover is the card's, so it goes on top.
+    val fan = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(covers.size) {
+        if (covers.isNotEmpty()) fan.animateTo(1f, androidx.compose.animation.core.spring(0.55f, androidx.compose.animation.core.Spring.StiffnessVeryLow))
+    }
+    // Covers that fail to load would be blank cards, so they drop out and the next one takes their place.
+    val broken = remember { androidx.compose.runtime.mutableStateListOf<String>() }
+    val hand = covers.filter { it !in broken }.take(3)
+    val spots = when (hand.size) {
+        1 -> listOf(0f to -6f)
+        2 -> listOf(-0.1f to -8f, 0.1f to 8f)
+        else -> listOf(0f to -3f, -0.22f to -16f, 0.22f to 13f)
+    }
+    hand.zip(spots).asReversed().forEach { (id, spot) ->
+        val (dx, angle) = spot
+        Cover(
+            id, 600, onError = { broken += id }, modifier = Modifier.align(Alignment.Center).graphicsLayer {
+                translationX = s.toPx() * dx * fan.value
+                translationY = s.toPx() * (0.06f + kotlin.math.abs(dx) * 0.2f * fan.value)
+                rotationZ = angle * fan.value
+            }.size(s * 0.46f).shadow(16.dp, RoundedCornerShape(4.dp)),
         )
     }
 }
@@ -630,8 +692,9 @@ fun CollectionScreen(kind: Kind, id: String) {
     // Mixes paint their own colour instead of the cover's.
     LaunchedEffect(c) { c?.coverArt?.takeIf { c.mix == null }?.let { nav.arts[Route.Open(kind, id)] = it } }
 
+    val backdrop = rememberGraphicsLayer()
     Box(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize(), state = list) {
+        LazyColumn(Modifier.fillMaxSize().underBar(backdrop), state = list) {
             item("header") {
                 Column(
                     Modifier.fillMaxWidth().statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp),
@@ -639,7 +702,7 @@ fun CollectionScreen(kind: Kind, id: String) {
                     val size = if (wide) 128.dp else 240.dp
                     val coverMod = Modifier.size(size).shadow(20.dp, RoundedCornerShape(6.dp))
                     val cover = @Composable {
-                        if (kind == Kind.Genre) GenreArt(id, c?.coverArt, coverMod, header = true)
+                        if (kind == Kind.Genre) GenreHeader(id, remember(c) { genreHand(c) }, coverMod.clip(RoundedCornerShape(6.dp)))
                         else TileCover(kind, id, c?.coverArt, c?.mix, coverMod, 600)
                     }
                     if (wide) Row(verticalAlignment = Alignment.Bottom) {
@@ -675,7 +738,7 @@ fun CollectionScreen(kind: Kind, id: String) {
             }
             item("end") { BottomSpacer() }
         }
-        TopBar(c?.title ?: "", color, collapsed)
+        TopBar(c?.title ?: "", color, collapsed, backdrop)
     }
 }
 
@@ -710,24 +773,53 @@ private fun CollectionInfo(kind: Kind, c: Collection?) {
 @Composable
 fun ErrorText(msg: String) = Text(msg, Modifier.fillMaxWidth().padding(32.dp), style = MaterialTheme.typography.bodySmall)
 
-/** Back button that grows a coloured bar with the title once the header scrolls away. */
+/** Whether the bar frosts the page behind it instead of covering it, so the aurora shows through. Blurring needs Android 12. */
+private val acrylic get() = auroraOn.on && Build.VERSION.SDK_INT >= 31
+
+/** Draws the page and records it into [layer] for [TopBar]. When [acrylic], the strip under the bar is left for the bar to draw frosted. */
 @Composable
-private fun TopBar(title: String, color: Color, solid: Boolean) {
-    val nav = LocalNav.current
-    val bg = when {
-        // In landscape it paints exactly the shell's background (the tint fading to Bg over the top 45% of the window), so it has no edges.
-        isWide() -> if (solid) {
-            val h = LocalWindowInfo.current.containerSize.height * .45f
-            Modifier.background(Brush.verticalGradient(listOf(color, Bg), startY = 0f, endY = h))
-        } else Modifier
-        solid -> Modifier.background(androidx.compose.ui.graphics.lerp(color, Color.Black, .45f))
-        else -> Modifier.background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .35f), Color.Transparent)))
+private fun Modifier.underBar(layer: GraphicsLayer): Modifier {
+    val density = LocalDensity.current
+    val bar = WindowInsets.statusBars.getTop(density) + with(density) { 56.dp.toPx() }
+    val frost = acrylic
+    return drawWithContent {
+        layer.record { this@drawWithContent.drawContent() }
+        if (frost) clipRect(top = bar) { drawLayer(layer) } else drawLayer(layer)
     }
-    Column(Modifier.fillMaxWidth().then(bg)) {
-        Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
-        Row(Modifier.height(56.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(nav::back) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
-            if (solid) Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+}
+
+/** Back button that eases in a coloured bar with the title once the header scrolls away; with the aurora on the bar is frosted glass. */
+@Composable
+private fun TopBar(title: String, color: Color, solid: Boolean, backdrop: GraphicsLayer) {
+    val nav = LocalNav.current
+    val t by animateFloatAsState(if (solid) 1f else 0f, tween(400), label = "bar")
+    val frost = acrylic
+    val wide = isWide()
+    // In landscape it paints exactly the shell's background (the tint fading to Bg over the top 45% of the window), so it has no edges.
+    val shellH = LocalWindowInfo.current.containerSize.height * .45f
+    Box(Modifier.fillMaxWidth()) {
+        // The page behind the bar, sharp while the header shows, frosting over as the bar fills in.
+        if (frost) Box(
+            Modifier.matchParentSize().graphicsLayer {
+                clip = true
+                renderEffect = (24.dp.toPx() * t).takeIf { it > 0f }?.let { BlurEffect(it, it) }
+            }.drawBehind { drawLayer(backdrop) },
+        )
+        Column(
+            Modifier.fillMaxWidth().drawBehind {
+                if (!wide) drawRect(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .35f), Color.Transparent)), alpha = 1 - t)
+                when {
+                    frost -> drawRect(lerp(color, Color.Black, .45f), alpha = .55f * t)
+                    wide -> drawRect(Brush.verticalGradient(listOf(color, Bg), startY = 0f, endY = shellH), alpha = t)
+                    else -> drawRect(lerp(color, Color.Black, .45f), alpha = t)
+                }
+            },
+        ) {
+            Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+            Row(Modifier.height(56.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(nav::back) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Back") }
+                if (t > 0f) Text(title, Modifier.graphicsLayer { alpha = t }, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }
@@ -769,8 +861,9 @@ fun ArtistScreen(id: String) {
     LaunchedEffect(image) { image?.let { nav.arts[Route.Open(Kind.Artist, id)] = it } }
     val wide = isWide()
 
+    val backdrop = rememberGraphicsLayer()
     Box(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize(), state = list) {
+        LazyColumn(Modifier.fillMaxSize().underBar(backdrop), state = list) {
             item("header") {
                 Box(Modifier.fillMaxWidth().height(if (wide) 220.dp else 340.dp)) {
                     // In landscape the photo fades out at the sides and bottom into the shared background instead of meeting it at an edge.
@@ -823,6 +916,6 @@ fun ArtistScreen(id: String) {
             }
             item("end") { BottomSpacer() }
         }
-        TopBar(a?.artist?.name ?: "", color, collapsed)
+        TopBar(a?.artist?.name ?: "", color, collapsed, backdrop)
     }
 }

@@ -226,11 +226,15 @@ fun coverRequest(ctx: Context, id: String, size: Int): ImageRequest.Builder {
 }
 
 @Composable
-fun Cover(id: String?, size: Int, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(4.dp), alpha: Float = 1f, colorFilter: ColorFilter? = null) {
+fun Cover(
+    id: String?, size: Int, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(4.dp), alpha: Float = 1f, colorFilter: ColorFilter? = null,
+    onError: (() -> Unit)? = null,
+) {
     val ctx = LocalContext.current
     val req = remember(id, size) { id?.let { coverRequest(ctx, it, size).build() } }
     AsyncImage(
         model = req, contentDescription = null, contentScale = ContentScale.Crop, alpha = alpha, colorFilter = colorFilter,
+        onError = onError?.let { { _ -> it() } },
         modifier = modifier.clip(shape).background(Elevated),
     )
 }
