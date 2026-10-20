@@ -91,6 +91,7 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -395,24 +396,44 @@ private fun GenreThumb(name: String) {
 private fun GenreCard(g: xyz.yuuki.navidroid.Genre) {
     val nav = LocalNav.current
     val art by androidx.compose.runtime.produceState<String?>(null, g.name) { value = runCatching { api.genreCover(g.name) }.getOrNull() }
+    GenreArt(g.name, art, Modifier.height(100.dp).clip(RoundedCornerShape(8.dp)).clickable { nav.go(Route.Open(Kind.Genre, g.name)) })
+}
+
+/**
+ * A genre's look on the browse cards and its header: the name over a tint of its cover, with the cover tilted in the corner.
+ * The square [header] has more room, so its cover is bigger and hangs off the corner, and the name is bigger.
+ */
+@Composable
+private fun GenreArt(name: String, art: String?, modifier: Modifier, header: Boolean = false) = androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
     // Tinted from the cover so card and art match; the palette colour shows until it loads.
     // The cover colour is darkened for headers, so lift it back to one even, vivid brightness.
-    val cover = rememberCoverColor(art, Color(xyz.yuuki.navidroid.paletteColor(g.name)))
+    val cover = rememberCoverColor(art, Color(xyz.yuuki.navidroid.paletteColor(name)))
     val bg = remember(cover) {
         val hsv = FloatArray(3).also { android.graphics.Color.colorToHSV(cover.toArgb(), it) }
         Color(android.graphics.Color.HSVToColor(floatArrayOf(hsv[0], hsv[1].coerceAtLeast(0.45f), 0.6f)))
     }
-    Box(Modifier.height(100.dp).clip(RoundedCornerShape(8.dp)).background(bg).clickable { nav.go(Route.Open(Kind.Genre, g.name)) }) {
-        // The cover again, blurred behind a wash that is solid under the title and thins out towards the art.
-        if (art != null) Cover(art, 200, Modifier.fillMaxSize().scale(1.3f).blur(10.dp), RoundedCornerShape(0.dp))
-        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(bg.copy(alpha = 0.92f), bg.copy(alpha = 0.6f), Color.Transparent))))
+    val h = maxHeight
+    val coverSize = if (header) h * 0.66f else 78.dp
+    val pad = if (header) h * 0.08f else 12.dp
+    Box(Modifier.fillMaxSize().background(bg)) {
+        if (header) {
+            // Big enough that a blurred cover turns to mud, so shade the tint instead: light behind the name, deep under the art.
+            Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(lerp(bg, Color.White, 0.12f), lerp(bg, Color.Black, 0.55f)))))
+        } else {
+            // The cover again, blurred behind a wash that is solid under the title and thins out towards the art.
+            if (art != null) Cover(art, 200, Modifier.fillMaxSize().scale(1.3f).blur(10.dp), RoundedCornerShape(0.dp))
+            Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(bg.copy(alpha = 0.92f), bg.copy(alpha = 0.6f), Color.Transparent))))
+        }
         if (art != null) Cover(
-            art, 200,
-            Modifier.align(Alignment.BottomEnd).offset(x = 8.dp, y = 0.dp).size(78.dp).rotate(25f).shadow(10.dp, RoundedCornerShape(4.dp)),
+            art, if (header) 600 else 200,
+            Modifier.align(Alignment.BottomEnd).offset(x = coverSize * (if (header) 0.2f else 0.1f), y = coverSize * (if (header) 0.14f else 0f))
+                .size(coverSize).rotate(25f).shadow(coverSize / 8, RoundedCornerShape(4.dp)),
         )
         Text(
-            g.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 56.dp),
+            name, maxLines = 2, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold,
+            style = if (header) MaterialTheme.typography.headlineMedium.copy(fontSize = (h.value * 0.13f).sp, lineHeight = (h.value * 0.15f).sp)
+            else MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(start = pad, top = pad, end = if (header) pad else 56.dp),
         )
     }
 }
@@ -613,9 +634,12 @@ fun CollectionScreen(kind: Kind, id: String) {
                 Column(
                     Modifier.fillMaxWidth().statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp),
                 ) {
-                    val mosaic = remember(c) { c?.takeIf { kind == Kind.Genre }?.songs?.mapNotNull { it.coverArt }?.distinct()?.take(4)?.takeIf { it.size == 4 } }
-                    val coverMod = Modifier.size(if (wide) 128.dp else 240.dp).shadow(20.dp, RoundedCornerShape(6.dp))
-                    val cover = @Composable { if (mosaic != null) CoverMosaic(mosaic, coverMod) else TileCover(kind, id, c?.coverArt, c?.mix, coverMod, 600) }
+                    val size = if (wide) 128.dp else 240.dp
+                    val coverMod = Modifier.size(size).shadow(20.dp, RoundedCornerShape(6.dp))
+                    val cover = @Composable {
+                        if (kind == Kind.Genre) GenreArt(id, c?.coverArt, coverMod, header = true)
+                        else TileCover(kind, id, c?.coverArt, c?.mix, coverMod, 600)
+                    }
                     if (wide) Row(verticalAlignment = Alignment.Bottom) {
                         cover()
                         Column(Modifier.padding(start = 20.dp)) { CollectionInfo(kind, c) }
@@ -650,14 +674,6 @@ fun CollectionScreen(kind: Kind, id: String) {
             item("end") { BottomSpacer() }
         }
         TopBar(c?.title ?: "", color, collapsed)
-    }
-}
-
-/** Four album covers in a 2x2 grid, for a genre's header. */
-@Composable
-private fun CoverMosaic(ids: List<String>, modifier: Modifier) = Column(modifier.clip(RoundedCornerShape(6.dp))) {
-    ids.chunked(2).forEach { row ->
-        Row(Modifier.weight(1f)) { row.forEach { Cover(it, 300, Modifier.weight(1f).fillMaxHeight(), RoundedCornerShape(0.dp)) } }
     }
 }
 
