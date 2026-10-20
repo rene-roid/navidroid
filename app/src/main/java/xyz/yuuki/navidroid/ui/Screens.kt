@@ -97,6 +97,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.text.style.LineBreak
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -105,9 +106,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import androidx.compose.ui.unit.sp
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.drawText
 import android.os.Build
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -424,82 +423,6 @@ private fun GenreCard(g: xyz.yuuki.navidroid.Genre) {
     }
 }
 
-/** Tinted from the genre's cover so card and header match; the palette colour shows until it loads. */
-@Composable
-private fun rememberGenreTint(name: String, art: String?): Color {
-    // The cover colour is darkened for headers, so lift it back to one even, vivid brightness.
-    val cover = rememberCoverColor(art, Color(xyz.yuuki.navidroid.paletteColor(name)))
-    return remember(cover) {
-        val hsv = FloatArray(3).also { android.graphics.Color.colorToHSV(cover.toArgb(), it) }
-        Color(android.graphics.Color.HSVToColor(floatArrayOf(hsv[0], hsv[1].coerceAtLeast(0.45f), 0.6f)))
-    }
-}
-
-/**
- * The card's cover first, then one per other album. Songs each carry their own cover id (`mf-…`) even within one album,
- * and the card's is the album's (`al-<albumId>_…`), so they are told apart by album.
- */
-private fun genreHand(c: Collection?) = listOfNotNull(c?.coverArt) + c?.songs.orEmpty()
-    .filter { it.albumId != null && c?.coverArt?.contains(it.albumId) != true }.distinctBy { it.albumId }.mapNotNull { it.coverArt }
-
-/** A genre's header: up to three of its covers fanned out like a hand of cards, over bands of its name sliding past. */
-@Composable
-private fun GenreHeader(name: String, covers: List<String>, modifier: Modifier) = BoxWithConstraints(modifier) {
-    val s = maxWidth
-    val bg = rememberGenreTint(name, covers.firstOrNull())
-    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
-    val band = remember(name, s) {
-        measurer.measure(
-            name.uppercase() + "  ",
-            androidx.compose.ui.text.TextStyle(fontSize = (s.value * 0.2f).sp, fontWeight = FontWeight.Black, lineHeight = (s.value * 0.2f).sp),
-        )
-    }
-    val slide = androidx.compose.animation.core.rememberInfiniteTransition("bands").animateFloat(
-        0f, 1f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(14000, easing = androidx.compose.animation.core.LinearEasing)), "slide",
-    )
-    val stroke = with(LocalDensity.current) { androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx()) }
-    androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
-        drawRect(Brush.linearGradient(listOf(lerp(bg, Color.White, 0.15f), lerp(bg, Color.Black, 0.6f))))
-        // Rows alternate filled and outlined and slide opposite ways; the phase is read here so only drawing repeats.
-        val w = band.size.width.toFloat()
-        val h = band.size.height * 0.92f
-        for (row in 0..(size.height / h).toInt()) {
-            val even = row % 2 == 0
-            var x = -w * (if (even) slide.value else 1f - slide.value) - (row % 3) * w / 3
-            while (x < size.width) {
-                drawText(
-                    band, Color.White, androidx.compose.ui.geometry.Offset(x, row * h - h * 0.15f),
-                    alpha = if (even) 0.1f else 0.28f, drawStyle = if (even) androidx.compose.ui.graphics.drawscope.Fill else stroke,
-                )
-                x += w
-            }
-        }
-    }
-    // Fanned out from a neat stack when the covers arrive. The first cover is the card's, so it goes on top.
-    val fan = remember { androidx.compose.animation.core.Animatable(0f) }
-    LaunchedEffect(covers.size) {
-        if (covers.isNotEmpty()) fan.animateTo(1f, androidx.compose.animation.core.spring(0.55f, androidx.compose.animation.core.Spring.StiffnessVeryLow))
-    }
-    // Covers that fail to load would be blank cards, so they drop out and the next one takes their place.
-    val broken = remember { androidx.compose.runtime.mutableStateListOf<String>() }
-    val hand = covers.filter { it !in broken }.take(3)
-    val spots = when (hand.size) {
-        1 -> listOf(0f to -6f)
-        2 -> listOf(-0.1f to -8f, 0.1f to 8f)
-        else -> listOf(0f to -3f, -0.22f to -16f, 0.22f to 13f)
-    }
-    hand.zip(spots).asReversed().forEach { (id, spot) ->
-        val (dx, angle) = spot
-        Cover(
-            id, 600, onError = { broken += id }, modifier = Modifier.align(Alignment.Center).graphicsLayer {
-                translationX = s.toPx() * dx * fan.value
-                translationY = s.toPx() * (0.06f + kotlin.math.abs(dx) * 0.2f * fan.value)
-                rotationZ = angle * fan.value
-            }.size(s * 0.46f).shadow(16.dp, RoundedCornerShape(4.dp)),
-        )
-    }
-}
-
 @Composable
 fun ListRow(title: String, subtitle: String, cover: @Composable () -> Unit, trailing: @Composable () -> Unit = {}, onClick: () -> Unit) = Row(
     Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).clickable(onClick = onClick).padding(vertical = 6.dp),
@@ -692,27 +615,44 @@ fun CollectionScreen(kind: Kind, id: String) {
     // Mixes paint their own colour instead of the cover's.
     LaunchedEffect(c) { c?.coverArt?.takeIf { c.mix == null }?.let { nav.arts[Route.Open(kind, id)] = it } }
 
+    val playingThis = player?.isPlaying == true && player.from == c?.title
+
     val backdrop = rememberGraphicsLayer()
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize().underBar(backdrop), state = list) {
             item("header") {
-                Column(
-                    Modifier.fillMaxWidth().statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp),
-                ) {
-                    val size = if (wide) 128.dp else 240.dp
-                    val coverMod = Modifier.size(size).shadow(20.dp, RoundedCornerShape(6.dp))
-                    val cover = @Composable {
-                        if (kind == Kind.Genre) GenreHeader(id, remember(c) { genreHand(c) }, coverMod.clip(RoundedCornerShape(6.dp)))
-                        else TileCover(kind, id, c?.coverArt, c?.mix, coverMod, 600)
+                val mix = c?.mix
+                val size = if (wide) 128.dp else 240.dp
+                val coverMod = Modifier.size(size).shadow(20.dp, RoundedCornerShape(6.dp)).clip(RoundedCornerShape(6.dp))
+                val covers = remember(c) { albumCovers(c?.songs.orEmpty()) }
+                val cover = @Composable {
+                    when {
+                        kind == Kind.Genre -> GenreHeader(id, remember(c) { genreHand(c) }, coverMod)
+                        mix != null -> MixFlow(mix, c?.coverArt, covers, coverMod)
+                        kind == Kind.Album -> AlbumHeader(c?.coverArt, playingThis, size)
+                        kind == Kind.Playlist -> PlaylistWall(covers, coverMod)
+                        else -> TileCover(kind, id, c?.coverArt, null, coverMod, 600)
                     }
-                    if (wide) Row(verticalAlignment = Alignment.Bottom) {
-                        cover()
-                        Column(Modifier.padding(start = 20.dp)) { CollectionInfo(kind, c) }
-                    } else {
-                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { cover() }
-                        Spacer(Modifier.height(20.dp))
-                        CollectionInfo(kind, c)
+                }
+                if (wide) Row(Modifier.statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp), verticalAlignment = Alignment.Bottom) {
+                    cover()
+                    Column(Modifier.padding(start = 20.dp)) { CollectionInfo(kind, c) }
+                } else if (kind == Kind.Playlist) {
+                    // Playlists and mixes run edge to edge and up under the status bar, fading out behind the title.
+                    Box(Modifier.fillMaxWidth()) {
+                        val fade = Modifier.matchParentSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawWithContent {
+                                drawContent()
+                                // Dimmed under the status bar and the title so they stay readable over busy covers.
+                                drawRect(Brush.verticalGradient(0f to Color.Black.copy(alpha = .5f), .25f to Color.Transparent, .6f to Color.Transparent, 1f to Color.Black.copy(alpha = .7f)))
+                                drawRect(Brush.verticalGradient(.5f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
+                            }
+                        if (mix != null) MixFlow(mix, c?.coverArt, covers, fade) else PlaylistWall(covers, fade)
+                        Column(Modifier.statusBarsPadding().padding(top = 250.dp, start = 16.dp, end = 16.dp)) { CollectionInfo(kind, c) }
                     }
+                } else Column(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp)) {
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { cover() }
+                    Spacer(Modifier.height(20.dp))
+                    CollectionInfo(kind, c)
                 }
             }
             item("actions") {
@@ -725,7 +665,6 @@ fun CollectionScreen(kind: Kind, id: String) {
                         Icon(Icons.Rounded.Shuffle, "Shuffle play", Modifier.size(28.dp), tint = Sub)
                     }
                     Spacer(Modifier.width(8.dp))
-                    val playingThis = player?.isPlaying == true && player.from == c?.title
                     PlayButton(playingThis) {
                         if (playingThis) player.toggle() else c?.let { player?.play(it.songs, from = it.title) }
                     }
@@ -866,22 +805,18 @@ fun ArtistScreen(id: String) {
         LazyColumn(Modifier.fillMaxSize().underBar(backdrop), state = list) {
             item("header") {
                 Box(Modifier.fillMaxWidth().height(if (wide) 220.dp else 340.dp)) {
-                    // In landscape the photo fades out at the sides and bottom into the shared background instead of meeting it at an edge.
-                    if (wide) Cover(
-                        image, 600,
+                    // The photo fades out into the shared background instead of meeting it at an edge, and at the sides too in landscape.
+                    ArtistHeader(
+                        a?.artist?.coverArt, image, remember(a) { (a?.albums.orEmpty() + a?.appearsOn.orEmpty()).mapNotNull { it.coverArt } }, color,
                         Modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawWithContent {
                             drawContent()
-                            drawRect(Brush.horizontalGradient(0f to Color.Transparent, .12f to Color.Black, .88f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
-                            drawRect(Brush.verticalGradient(.45f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
+                            if (wide) drawRect(Brush.horizontalGradient(0f to Color.Transparent, .12f to Color.Black, .88f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
+                            drawRect(Brush.verticalGradient((if (wide) .45f else .6f) to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
                         },
-                        RoundedCornerShape(0.dp),
-                    ) else {
-                        Cover(image, 600, Modifier.fillMaxSize(), RoundedCornerShape(0.dp))
-                        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Transparent, .55f to Color.Transparent, 1f to Bg)))
-                    }
+                    )
                     Text(
                         a?.artist?.name ?: "", style = MaterialTheme.typography.displaySmall, fontSize = 40.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.align(Alignment.BottomStart).padding(16.dp),
+                        textAlign = TextAlign.Center, modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
                     )
                 }
             }

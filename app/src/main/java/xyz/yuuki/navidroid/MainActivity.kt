@@ -65,6 +65,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -208,8 +211,19 @@ private fun Shell(onLogout: () -> Unit) {
                     )
 
                     if (!wide) Column(
-                        Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                            .background(Brush.verticalGradient(0f to Color.Transparent, .35f to Color.Black.copy(alpha = .85f), 1f to Color.Black)),
+                        Modifier.align(Alignment.BottomCenter).fillMaxWidth().drawBehind {
+                            // Eases in from well above the bar, so over the aurora it reads as a shadow rather than a black band;
+                            // a fade the bar's own height turned into an edge whenever there was no mini player to stretch it.
+                            val fade = 56.dp.toPx()
+                            val h = size.height + fade
+                            drawRect(
+                                Brush.verticalGradient(
+                                    0f to Color.Transparent, fade * .4f / h to Color.Black.copy(alpha = .25f), fade / h to Color.Black.copy(alpha = .85f),
+                                    1f to Color.Black, startY = -fade, endY = size.height,
+                                ),
+                                topLeft = Offset(0f, -fade), size = Size(size.width, h),
+                            )
+                        },
                     ) {
                         Spacer(Modifier.height(16.dp))
                         player?.let { MiniPlayer(it) { nowPlaying = true } }
