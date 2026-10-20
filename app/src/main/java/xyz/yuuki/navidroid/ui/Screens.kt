@@ -174,7 +174,7 @@ fun HomeScreen() {
         home.refresh()
     }
     PullToRefreshBox(home.loading && home.data != null, refresh, Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.fillMaxSize().then(if (isWide()) Modifier else Modifier.background(Brush.verticalGradient(0f to HomeTint, .35f to Bg)))) {
+        LazyColumn(Modifier.fillMaxSize()) {
             item("top") {
                 // In landscape downloads and settings live in the rail.
                 val wide = isWide()
@@ -611,8 +611,7 @@ fun CollectionScreen(kind: Kind, id: String) {
         LazyColumn(Modifier.fillMaxSize(), state = list) {
             item("header") {
                 Column(
-                    Modifier.fillMaxWidth().then(if (wide) Modifier else Modifier.background(Brush.verticalGradient(listOf(color, Bg))))
-                        .statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp),
+                    Modifier.fillMaxWidth().statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp),
                 ) {
                     val mosaic = remember(c) { c?.takeIf { kind == Kind.Genre }?.songs?.mapNotNull { it.coverArt }?.distinct()?.take(4)?.takeIf { it.size == 4 } }
                     val coverMod = Modifier.size(if (wide) 128.dp else 240.dp).shadow(20.dp, RoundedCornerShape(6.dp))
@@ -698,9 +697,9 @@ fun ErrorText(msg: String) = Text(msg, Modifier.fillMaxWidth().padding(32.dp), s
 private fun TopBar(title: String, color: Color, solid: Boolean) {
     val nav = LocalNav.current
     val bg = when {
-        // In landscape it paints exactly the shell's background (the tint fading to Bg over the top 35% of the window), so it has no edges.
+        // In landscape it paints exactly the shell's background (the tint fading to Bg over the top 45% of the window), so it has no edges.
         isWide() -> if (solid) {
-            val h = LocalWindowInfo.current.containerSize.height * .35f
+            val h = LocalWindowInfo.current.containerSize.height * .45f
             Modifier.background(Brush.verticalGradient(listOf(color, Bg), startY = 0f, endY = h))
         } else Modifier
         solid -> Modifier.background(androidx.compose.ui.graphics.lerp(color, Color.Black, .45f))

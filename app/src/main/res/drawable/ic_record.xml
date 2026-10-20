@@ -1,0 +1,8 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- a green record: the grooves and label are cut out (evenOdd) so the same drawable works as the monochrome icon -->
+    <path android:fillColor="#1DB954" android:fillType="evenOdd"
+        android:pathData="M54,26a28,28 0 1,0 0.01,0z M54,31.3a22.7,22.7 0 1,0 0.01,0z M54,32.5a21.5,21.5 0 1,0 0.01,0z M54,36.8a17.2,17.2 0 1,0 0.01,0z M54,38a16,16 0 1,0 0.01,0z M54,43a11,11 0 1,0 0.01,0z" />
+    <!-- light catching the vinyl -->
+    <path android:fillColor="#FFFFFF" android:fillAlpha="0.2"
+        android:pathData="M59.07,43.12L65.83,28.62A28,28 0 0,1 76.94,37.94L63.83,47.12A12,12 0 0,0 59.07,43.12Z M48.93,64.88L42.17,79.38A28,28 0 0,1 31.06,70.06L44.17,60.88A12,12 0 0,0 48.93,64.88Z" />
+</vector>

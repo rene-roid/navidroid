@@ -77,6 +77,7 @@ import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.ui.NavDisplay
 import com.google.common.util.concurrent.ListenableFuture
 import xyz.yuuki.navidroid.ui.ArtistScreen
+import xyz.yuuki.navidroid.ui.Aurora
 import xyz.yuuki.navidroid.ui.Bg
 import xyz.yuuki.navidroid.ui.CollectionScreen
 import xyz.yuuki.navidroid.ui.DockedPlayer
@@ -164,10 +165,11 @@ private fun Shell(onLogout: () -> Unit) {
     val docked = wide && player?.song != null
 
     CompositionLocalProvider(LocalNav provides nav) {
-        // In landscape the rail, the page and the player card share one background tinted by the page, so it runs edge to edge.
+        // The rail, the page and the player card share one sky tinted by the page, so it runs edge to edge.
         val page = nav.stack.last()
-        val tint by animateColorAsState(if (!wide) Bg else nav.tints[page] ?: if (page == Route.Home) HomeTint else Bg, tween(300))
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to tint, .35f to Bg))) {
+        Box(Modifier.fillMaxSize()) {
+            val listening = player != null && (player.isPlaying || player.loading)
+            Aurora(player?.song?.coverArt?.takeIf { listening }, nav.tints[page] ?: HomeTint.takeIf { page == Route.Home }, Modifier.fillMaxSize())
             // Landscape has its own layout: an icon rail, the page, and while something plays the player as a card on the right.
             Row(Modifier.fillMaxSize()) {
                 if (wide) Column(

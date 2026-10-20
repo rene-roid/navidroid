@@ -226,7 +226,8 @@ fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
     val lyrics = rememberLoad("lyrics:${song.id}") { App.it.api.lyrics(song.id) }
     val pos = rememberPosition(p, 200)
 
-    Box(Modifier.fillMaxSize().then(rememberPullToClose(onClose)).background(Bg).background(Brush.verticalGradient(listOf(color, lerp(color, Bg, .6f), Bg)))) {
+    Box(Modifier.fillMaxSize().then(rememberPullToClose(onClose))) {
+        Aurora(song.coverArt, color, Modifier.fillMaxSize())
         LazyColumn(Modifier.fillMaxSize().statusBarsPadding()) {
             item("top") {
                 Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {

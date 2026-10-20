@@ -190,6 +190,7 @@ class Prefs(ctx: Context) {
     var streamBitrateMobile by int("streamMobile", 192)
     var downloadBitrate by int("downloadBitrate", 160)
     var wifiOnlyDownloads by bool("wifiOnly", true)
+    var auroraColors by int("auroraColors", 0)
     var lastSync by long("lastSync")
 
     /** Playlist ids saved to the library; Subsonic can't star playlists, so they live here. */
@@ -208,6 +209,10 @@ class Prefs(ctx: Context) {
         set(v) = p.edit().putString("scrobbles", v.joinToString("\n")).apply()
 
     val loggedIn get() = token != null && endpoints.isNotEmpty()
+
+    fun flag(k: String) = p.getBoolean(k, true)
+
+    fun flag(k: String, v: Boolean) = p.edit().putBoolean(k, v).apply()
 
     fun clear() = p.edit().clear().apply()
 

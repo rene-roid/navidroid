@@ -2,6 +2,7 @@ package xyz.yuuki.navidroid
 
 import android.app.PendingIntent
 import android.graphics.Bitmap
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.view.KeyEvent
@@ -20,6 +21,10 @@ import androidx.media3.common.util.BitmapLoader
 import androidx.media3.common.util.Util
 import androidx.media3.datasource.DataSourceBitmapLoader
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.TeeAudioProcessor
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.extractor.DefaultExtractorsFactory
@@ -85,7 +90,14 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
         val app = application as App
-        val player = ExoPlayer.Builder(this)
+        // The aurora listens to the decoded audio on its way to the speaker.
+        val renderers = object : DefaultRenderersFactory(this) {
+            override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink =
+                DefaultAudioSink.Builder(context).setEnableFloatOutput(enableFloatOutput)
+                    .setEnableAudioOutputPlaybackParameters(enableAudioTrackPlaybackParams)
+                    .setAudioProcessors(arrayOf(TeeAudioProcessor(Levels))).build()
+        }
+        val player = ExoPlayer.Builder(this, renderers)
             // Transcoded streams have no length; seek them by bitrate instead.
             .setMediaSourceFactory(DefaultMediaSourceFactory(app.offline.playback, DefaultExtractorsFactory().setConstantBitrateSeekingAlwaysEnabled(true)))
             // Start after half a second of audio instead of 2.5 s; songs are cached or preloaded most of the time.

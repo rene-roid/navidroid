@@ -167,10 +167,10 @@ fun LoginScreen(onDone: () -> Unit) {
             Modifier.fillMaxSize().systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Image(
-                painterResource(R.drawable.ic_launcher_fg), null,
-                Modifier.size(200.dp).graphicsLayer { rotationZ = spin },
-            )
+            Box(Modifier.size(200.dp)) {
+                Image(painterResource(R.drawable.ic_record), null, Modifier.matchParentSize().graphicsLayer { rotationZ = spin })
+                Image(painterResource(R.drawable.ic_play_label), null, Modifier.matchParentSize())
+            }
             Text("Navidroid", style = MaterialTheme.typography.displaySmall, modifier = Modifier.offset(y = (-28).dp))
             Text(
                 "Your whole library, streamed from your own Navidrome server.",
@@ -250,16 +250,21 @@ private fun SettingRow(title: String, subtitle: String? = null, onClick: (() -> 
 private val qualities = listOf(0 to "Original", 320 to "320 kbps", 256 to "256 kbps", 192 to "192 kbps", 160 to "160 kbps", 128 to "128 kbps", 96 to "96 kbps")
 
 @Composable
-private fun QualityRow(title: String, value: Int, onChange: (Int) -> Unit) {
+private fun ChoiceRow(title: String, value: Int, options: List<Pair<Int, String>> = qualities, onChange: (Int) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
-        SettingRow(title, qualities.firstOrNull { it.first == value }?.second ?: "$value kbps", { open = true })
+        SettingRow(title, options.firstOrNull { it.first == value }?.second ?: "$value kbps", { open = true })
         DropdownMenu(open, { open = false }, containerColor = Elevated) {
-            qualities.forEach { (v, label) ->
+            options.forEach { (v, label) ->
                 DropdownMenuItem({ Text(label) }, { onChange(v); open = false }, trailingIcon = { if (v == value) Icon(Icons.Rounded.Check, null, tint = Green) })
             }
         }
     }
+}
+
+@Composable
+private fun AuroraSwitch(t: Toggle) = SettingRow(t.title, t.subtitle, { t.on = !t.on }) {
+    Switch(t.on, { t.on = it }, colors = SwitchDefaults.colors(checkedTrackColor = Green))
 }
 
 @Composable
@@ -354,11 +359,18 @@ fun SettingsScreen(onLogout: () -> Unit) {
         }
 
         item { Group("Streaming quality") }
-        item { QualityRow("On Wi-Fi", wifi) { wifi = it; prefs.streamBitrateWifi = it } }
-        item { QualityRow("On mobile data", mobile) { mobile = it; prefs.streamBitrateMobile = it } }
+        item { ChoiceRow("On Wi-Fi", wifi) { wifi = it; prefs.streamBitrateWifi = it } }
+        item { ChoiceRow("On mobile data", mobile) { mobile = it; prefs.streamBitrateMobile = it } }
+
+        item { Group("Look") }
+        item { AuroraSwitch(auroraOn) }
+        if (auroraOn.on) {
+            item { ChoiceRow("Aurora colours", auroraMode, auroraModes) { auroraMode = it; prefs.auroraColors = it } }
+            items(auroraDetails, key = { it.title }) { AuroraSwitch(it) }
+        }
 
         item { Group("Downloads") }
-        item { QualityRow("Download quality", dl) { dl = it; prefs.downloadBitrate = it; app.offline.sync() } }
+        item { ChoiceRow("Download quality", dl) { dl = it; prefs.downloadBitrate = it; app.offline.sync() } }
         item {
             SettingRow("Download on Wi-Fi only", "Pinned playlists wait for Wi-Fi") {
                 Switch(wifiOnly, { wifiOnly = it; app.offline.setWifiOnly(it) }, colors = SwitchDefaults.colors(checkedTrackColor = Green))

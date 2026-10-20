@@ -241,19 +241,20 @@ fun rememberCoverColor(id: String?, fallback: Color = Color(0xFF404040)): Color 
     var c by remember(id) { mutableStateOf(id?.let { colors[it] } ?: fallback) }
     LaunchedEffect(id) {
         if (id == null || colors[id] != null) return@LaunchedEffect
-        val res = ctx.imageLoader.execute(coverRequest(ctx, id, 300).allowHardware(false).memoryCacheKey("pal:$id").build())
-        val bmp = (res as? SuccessResult)?.image?.toBitmap() ?: return@LaunchedEffect
-        val color = withContext(Dispatchers.Default) {
-            val p = Palette.from(bmp).maximumColorCount(16).generate()
-            val sw = p.vibrantSwatch ?: p.darkVibrantSwatch ?: p.dominantSwatch ?: return@withContext null
-            var col = Color(sw.rgb)
-            while (col.luminance() > 0.22f) col = lerp(col, Color.Black, 0.15f)
-            col
-        } ?: return@LaunchedEffect
+        val p = coverPalette(ctx, id) ?: return@LaunchedEffect
+        val sw = p.vibrantSwatch ?: p.darkVibrantSwatch ?: p.dominantSwatch ?: return@LaunchedEffect
+        var color = Color(sw.rgb)
+        while (color.luminance() > 0.22f) color = lerp(color, Color.Black, 0.15f)
         colors.put(id, color)
         c = color
     }
     return animateColorAsState(c, tween(400), label = "cover").value
+}
+
+suspend fun coverPalette(ctx: Context, id: String): Palette? {
+    val res = ctx.imageLoader.execute(coverRequest(ctx, id, 300).allowHardware(false).memoryCacheKey("pal:$id").build())
+    val bmp = (res as? SuccessResult)?.image?.toBitmap() ?: return null
+    return withContext(Dispatchers.Default) { Palette.from(bmp).maximumColorCount(16).generate() }
 }
 
 private val grayscale = ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
