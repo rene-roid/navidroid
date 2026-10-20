@@ -627,6 +627,8 @@ fun CollectionScreen(kind: Kind, id: String) {
     val wide = isWide()
     val nav = LocalNav.current
     LaunchedEffect(color) { nav.tints[Route.Open(kind, id)] = color }
+    // Mixes paint their own colour instead of the cover's.
+    LaunchedEffect(c) { c?.coverArt?.takeIf { c.mix == null }?.let { nav.arts[Route.Open(kind, id)] = it } }
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), state = list) {
@@ -764,6 +766,7 @@ fun ArtistScreen(id: String) {
     val scope = rememberCoroutineScope()
     val nav = LocalNav.current
     LaunchedEffect(color) { nav.tints[Route.Open(Kind.Artist, id)] = color }
+    LaunchedEffect(image) { image?.let { nav.arts[Route.Open(Kind.Artist, id)] = it } }
     val wide = isWide()
 
     Box(Modifier.fillMaxSize()) {

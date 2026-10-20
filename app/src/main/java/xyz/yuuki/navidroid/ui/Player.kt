@@ -227,7 +227,7 @@ fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
     val pos = rememberPosition(p, 200)
 
     Box(Modifier.fillMaxSize().then(rememberPullToClose(onClose))) {
-        Aurora(song.coverArt, color, Modifier.fillMaxSize())
+        Aurora(song.coverArt, null, modifier = Modifier.fillMaxSize(), plain = color)
         LazyColumn(Modifier.fillMaxSize().statusBarsPadding()) {
             item("top") {
                 Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {

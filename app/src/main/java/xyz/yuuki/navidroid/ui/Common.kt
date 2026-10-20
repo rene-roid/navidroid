@@ -123,6 +123,9 @@ class Nav {
     /** The colour a page wants behind it; in landscape the shell paints it under the rail and the player card too. */
     val tints = mutableStateMapOf<Route, Color>()
 
+    /** The cover a page is about, so the aurora can take its colours. */
+    val arts = mutableStateMapOf<Route, String>()
+
     fun go(r: Route) = stack.add(r)
 
     fun back() {

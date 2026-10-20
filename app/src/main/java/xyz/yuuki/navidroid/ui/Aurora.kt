@@ -125,6 +125,7 @@ class Toggle(private val key: String, val title: String, val subtitle: String) {
         }
 }
 
+val auroraPage = Toggle("auroraPage", "Match the page you open", "Albums, playlists and artists colour the sky while you're on them")
 val auroraOn = Toggle("aurora", "Aurora background", "A night sky with northern lights behind the app")
 val auroraMotion = Toggle("auroraMotion", "Movement", "Curtains fold and drift, stars twinkle")
 val auroraMusic = Toggle("auroraMusic", "React to music", "Taller curtains when it's loud, a flash on the beat")
@@ -132,7 +133,7 @@ val auroraStars = Toggle("auroraStars", "Stars", "Drifting stars behind the curt
 val auroraShootingStars = Toggle("auroraShooting", "Shooting stars", "One every ten seconds or so")
 
 /** The settings that only matter while the aurora is on. */
-val auroraDetails = listOf(auroraMotion, auroraMusic, auroraStars, auroraShootingStars)
+val auroraDetails = listOf(auroraPage, auroraMotion, auroraMusic, auroraStars, auroraShootingStars)
 
 private fun hsv(c: Color) = FloatArray(3).also { android.graphics.Color.colorToHSV(c.toArgb(), it) }
 
@@ -154,25 +155,33 @@ private fun fromPalette(p: Palette): List<Color>? {
 
 /**
  * The night sky behind the app: drifting stars, a shooting star now and then, and an aurora that swells with the music.
- * Per [auroraMode] it's coloured by the cover [art], the [page]'s colour, or the classic teal to pink; the sky is a
- * dark shade of the same colours so the two never clash.
+ * Per [auroraMode] and [auroraPage] it's coloured by the playing song's cover [art], the open page's cover [pageArt]
+ * or colour [page], or the classic teal to pink; the sky is a dark shade of the same colours so the two never clash. Colours crossfade,
+ * so opening an album eases the sky over to it.
  */
 @Composable
-fun Aurora(art: String?, page: Color?, modifier: Modifier = Modifier) {
+fun Aurora(art: String?, page: Color?, pageArt: String? = null, modifier: Modifier = Modifier, plain: Color? = page) {
     SideEffect { Levels.listening = auroraOn.on && auroraMusic.on }
     // Off, it's the plain background the app had before: the page's colour fading into the dark.
-    if (auroraOn.on) Sky(art, page, modifier) else Box(modifier.background(Brush.verticalGradient(0f to (page ?: Bg), .45f to Bg)))
+    if (auroraOn.on) Sky(art, page, pageArt, modifier) else Box(modifier.background(Brush.verticalGradient(0f to (plain ?: Bg), .45f to Bg)))
 }
 
 @Composable
-private fun Sky(art: String?, page: Color?, modifier: Modifier) {
+private fun Sky(art: String?, page: Color?, pageArt: String?, modifier: Modifier) {
     val ctx = LocalContext.current
-    val source = art.takeIf { auroraMode != 2 }
+    val pageSpread = page?.takeIf { hsv(it)[1] > .2f }?.let(::spread)
+    val followPage = auroraPage.on && auroraMode != 2
+    val source = when {
+        auroraMode == 2 -> null
+        followPage && pageArt != null -> pageArt
+        followPage && pageSpread != null -> null
+        else -> art
+    }
     val fromArt by produceState<List<Color>?>(null, source) {
         if (source == null) value = null
         else value = auroraColors[source] ?: coverPalette(ctx, source)?.let(::fromPalette)?.also { auroraColors.put(source, it) }
     }
-    val target = fromArt ?: page?.takeIf { auroraMode == 1 && hsv(it)[1] > .2f }?.let(::spread) ?: defaults
+    val target = fromArt ?: pageSpread?.takeIf { followPage || auroraMode == 1 } ?: defaults
     val colors = target.map { animateColorAsState(it, tween(1200), label = "aurora").value }
     val sky by animateColorAsState(if (target == defaults) Night else Color.hsv(hsv(target[0])[0], .6f, .2f), tween(1200), label = "sky")
 

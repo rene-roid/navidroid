@@ -169,7 +169,7 @@ private fun Shell(onLogout: () -> Unit) {
         val page = nav.stack.last()
         Box(Modifier.fillMaxSize()) {
             val listening = player != null && (player.isPlaying || player.loading)
-            Aurora(player?.song?.coverArt?.takeIf { listening }, nav.tints[page] ?: HomeTint.takeIf { page == Route.Home }, Modifier.fillMaxSize())
+            Aurora(player?.song?.coverArt?.takeIf { listening }, nav.tints[page], nav.arts[page], Modifier.fillMaxSize(), plain = nav.tints[page] ?: HomeTint.takeIf { page == Route.Home })
             // Landscape has its own layout: an icon rail, the page, and while something plays the player as a card on the right.
             Row(Modifier.fillMaxSize()) {
                 if (wide) Column(
