@@ -1,5 +1,10 @@
 package xyz.yuuki.navidroid.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animate
 import androidx.compose.foundation.background
@@ -205,13 +210,7 @@ fun MiniPlayer(p: PlayerState, onOpen: () -> Unit) {
                 else Icon(if (p.isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, "Play/pause", Modifier.size(30.dp), tint = Color.White)
             }
         }
-        val dur = song.duration * 1000f
-        Box(
-            Modifier.align(Alignment.BottomStart).padding(horizontal = 8.dp).fillMaxWidth().height(2.dp)
-                .clip(RoundedCornerShape(1.dp)).background(Color.White.copy(alpha = .25f)),
-        ) {
-            Box(Modifier.fillMaxWidth(if (dur > 0) (pos / dur).coerceIn(0f, 1f) else 0f).height(2.dp).background(Color.White))
-        }
+        Progress(p, song, pos, Modifier.align(Alignment.BottomStart).padding(horizontal = 8.dp))
     }
 }
 
@@ -228,7 +227,7 @@ fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
 
     Box(Modifier.fillMaxSize().then(rememberPullToClose(onClose))) {
         Aurora(song.coverArt, null, modifier = Modifier.fillMaxSize(), plain = color)
-        LazyColumn(Modifier.fillMaxSize().statusBarsPadding()) {
+        LazyColumn(Modifier.align(Alignment.TopCenter).widthIn(max = 640.dp).fillMaxSize().statusBarsPadding()) {
             item("top") {
                 Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClose) { Icon(Icons.Rounded.KeyboardArrowDown, "Close", Modifier.size(32.dp)) }
@@ -359,25 +358,27 @@ private fun Modifier.swipeToSkip(p: PlayerState, song: Song): Modifier {
 
 /**
  * Landscape player: a floating card beside the page. The cover sits next to the title, the controls under it,
- * and lyrics or the queue fill the rest.
+ * and lyrics or the queue fill the rest. On a tablet the tabs move to the top and the controls to the bottom, where
+ * they stay, and a song without lyrics shows its cover big in their place.
  */
 @Composable
 fun DockedPlayer(p: PlayerState, modifier: Modifier = Modifier) {
     val song = p.song ?: return
-    val nav = LocalNav.current
     val goToArtist = rememberGoToArtist()
     val color = rememberCoverColor(song.coverArt)
     val lyrics = rememberLoad("lyrics:${song.id}") { App.it.api.lyrics(song.id) }
     val pos = rememberPosition(p, 200)
     var showQueue by rememberSaveable { mutableStateOf(false) }
+    val tablet = isTablet()
+    val bigCover = tablet && !showQueue && lyrics.data == null && !lyrics.loading
 
-    Column(
-        modifier.clip(RoundedCornerShape(18.dp))
-            .background(Brush.verticalGradient(0f to color, .55f to lerp(Bg, color, .25f), 1f to Surface)),
-    ) {
-        Row(Modifier.padding(start = 14.dp, top = 14.dp, end = 4.dp, bottom = 4.dp)) {
-            Cover(song.coverArt, 300, Modifier.size(88.dp).swipeToSkip(p, song).shadow(12.dp, RoundedCornerShape(10.dp)), RoundedCornerShape(10.dp))
-            Column(Modifier.weight(1f).padding(start = 14.dp, top = 2.dp)) {
+    val head = @Composable {
+        Row(Modifier.padding(start = 14.dp, top = if (tablet) 12.dp else 14.dp, end = 4.dp, bottom = 4.dp)) {
+            AnimatedVisibility(!bigCover) {
+                val size = if (tablet) 72.dp else 88.dp
+                Cover(song.coverArt, 300, Modifier.padding(end = 14.dp).size(size).swipeToSkip(p, song).shadow(12.dp, RoundedCornerShape(10.dp)), RoundedCornerShape(10.dp))
+            }
+            Column(Modifier.weight(1f).padding(top = 2.dp)) {
                 Text(
                     "PLAYING FROM ${(p.from ?: song.album).uppercase()}", style = MaterialTheme.typography.labelSmall, fontSize = 10.sp,
                     letterSpacing = 1.sp, color = Color.White.copy(alpha = .6f), maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -388,40 +389,100 @@ fun DockedPlayer(p: PlayerState, modifier: Modifier = Modifier) {
                     modifier = Modifier.clickable(enabled = song.artistId != null) { goToArtist(song) },
                 )
             }
-            Column {
+            // Side by side on a tablet, where the head is only as tall as its small cover.
+            val actions = @Composable {
                 HeartButton(Likes.isLiked(song), 24.dp) { Likes.toggle(song) }
                 SongMenu(song, Color.White)
             }
+            if (tablet) Row { actions() } else Column { actions() }
         }
-        Seek(p, song, pos, inset = 16.dp, inline = true)
-        Controls(p, play = 52.dp, inset = 8.dp, vertical = 0.dp)
+    }
+    val tabs = @Composable {
         Row(
-            Modifier.padding(start = 12.dp, end = 12.dp, top = 8.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color.Black.copy(alpha = .25f)).padding(3.dp),
+            Modifier.padding(start = 12.dp, end = 12.dp, top = if (tablet) 12.dp else 8.dp).fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color.Black.copy(alpha = .25f)).padding(3.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             @Composable
             fun seg(label: String, on: Boolean, onClick: () -> Unit) = Box(
                 Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(if (on) Color.White.copy(alpha = .14f) else Color.Transparent)
-                    .clickable(onClick = onClick).padding(vertical = 6.dp),
+                    .clickable(onClick = onClick).padding(vertical = if (tablet) 8.dp else 6.dp),
                 contentAlignment = Alignment.Center,
             ) { Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.W700, color = if (on) Color.White else Sub) }
             seg("Lyrics", !showQueue) { showQueue = false }
             seg("Up next", showQueue) { showQueue = true }
         }
-        // Rows fade out at the top and bottom edges instead of being cut off.
-        val fade = Modifier.weight(1f).fillMaxWidth().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawWithContent {
-            drawContent()
-            drawRect(Brush.verticalGradient(0f to Color.Transparent, .08f to Color.Black, .88f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
-        }
+    }
+    // Rows fade out at the top and bottom edges instead of being cut off.
+    val fade = Modifier.fillMaxWidth().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawWithContent {
+        drawContent()
+        drawRect(Brush.verticalGradient(0f to Color.Transparent, .08f to Color.Black, .88f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
+    }
+    val panel = @Composable { m: Modifier ->
         val l = lyrics.data
         when {
-            showQueue -> LazyColumn(fade, contentPadding = PaddingValues(vertical = 8.dp)) {
+            showQueue -> LazyColumn(m.then(fade), contentPadding = PaddingValues(vertical = 8.dp)) {
                 if (p.upNext.isEmpty()) item { Hint("Nothing queued") }
                 itemsIndexed(p.upNext, key = { _, (i, s) -> "$i:${s.id}" }) { _, (i, s) -> QueueRow(p, i, s, Modifier.animateItem(), start = 16.dp, cover = 40.dp) }
             }
-            l == null -> Box(fade) { Hint(if (lyrics.loading) "" else "No lyrics for this song") }
-            else -> LyricLines(p, l, pos, fade)
+            bigCover -> BoxWithConstraints(m.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                val side = minOf(maxWidth, maxHeight) - 32.dp
+                Cover(song.coverArt, 600, Modifier.size(side).swipeToSkip(p, song).shadow(24.dp, RoundedCornerShape(14.dp)), RoundedCornerShape(14.dp))
+            }
+            l == null -> Box(m.then(fade)) { Hint(if (lyrics.loading) "" else "No lyrics for this song") }
+            else -> LyricLines(p, l, pos, m.then(fade), if (tablet) 22.sp else 18.sp)
         }
+    }
+
+    Column(
+        modifier.clip(RoundedCornerShape(if (tablet) 22.dp else 18.dp))
+            .background(Brush.verticalGradient(0f to color, .55f to lerp(Bg, color, .25f), 1f to Surface)),
+    ) {
+        if (tablet) {
+            tabs()
+            head()
+            panel(Modifier.weight(1f))
+            Seek(p, song, pos, inset = 12.dp)
+            Controls(p, play = 60.dp, inset = 8.dp, vertical = 0.dp)
+            Spacer(Modifier.height(8.dp))
+        } else {
+            head()
+            Seek(p, song, pos, inset = 16.dp, inline = true)
+            Controls(p, play = 52.dp, inset = 8.dp, vertical = 0.dp)
+            tabs()
+            panel(Modifier.weight(1f))
+        }
+    }
+}
+
+/** Tablet in portrait: the player as a bar under the page. Tap it for the full-screen player. */
+@Composable
+fun PlayerBar(p: PlayerState, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    val song = p.song ?: return
+    val color = rememberCoverColor(song.coverArt, Elevated)
+    val pos = rememberPosition(p, 500)
+    Box(
+        modifier.clip(RoundedCornerShape(18.dp)).background(Brush.horizontalGradient(0f to color, .5f to Surface))
+            .clickable(onClick = onOpen),
+    ) {
+        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Cover(song.coverArt, 120, Modifier.size(60.dp).swipeToSkip(p, song), RoundedCornerShape(10.dp))
+            Column(Modifier.width(190.dp).padding(start = 14.dp)) {
+                Text(song.title, style = MaterialTheme.typography.titleSmall, fontSize = 15.sp, maxLines = 1, modifier = Modifier.basicMarquee())
+                Text(song.artist, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = .7f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            HeartButton(Likes.isLiked(song), 24.dp) { Likes.toggle(song) }
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { Controls(p, play = 48.dp, inset = 0.dp, vertical = 0.dp, modifier = Modifier.widthIn(max = 340.dp)) }
+        }
+        Progress(p, song, pos, Modifier.align(Alignment.BottomStart).padding(horizontal = 18.dp))
+    }
+}
+
+/** A thin, untouchable progress line along the bottom of the mini player and the bar. */
+@Composable
+private fun Progress(p: PlayerState, song: Song, pos: Long, modifier: Modifier) {
+    val dur = (p.c.duration.takeIf { it > 0 } ?: (song.duration * 1000L)).toFloat()
+    Box(modifier.fillMaxWidth().height(2.dp).clip(RoundedCornerShape(1.dp)).background(Color.White.copy(alpha = .25f))) {
+        Box(Modifier.fillMaxWidth((pos / dur).coerceIn(0f, 1f)).height(2.dp).background(Color.White))
     }
 }
 
@@ -429,7 +490,7 @@ fun DockedPlayer(p: PlayerState, modifier: Modifier = Modifier) {
 private fun Hint(text: String) = Text(text, style = MaterialTheme.typography.bodyMedium, color = Sub, modifier = Modifier.padding(16.dp))
 
 @Composable
-private fun LyricLines(p: PlayerState, l: xyz.yuuki.navidroid.Lyrics, pos: Long, modifier: Modifier) {
+private fun LyricLines(p: PlayerState, l: xyz.yuuki.navidroid.Lyrics, pos: Long, modifier: Modifier, size: TextUnit = 18.sp) {
     val current = if (l.synced) l.lines.indexOfLast { it.ms <= pos } else -1
     val list = rememberLazyListState()
     LaunchedEffect(current) { if (current >= 0) list.animateScrollToItem((current - 1).coerceAtLeast(0)) }
@@ -437,7 +498,7 @@ private fun LyricLines(p: PlayerState, l: xyz.yuuki.navidroid.Lyrics, pos: Long,
         itemsIndexed(l.lines) { i, line ->
             Text(
                 line.text.ifBlank { "♪" },
-                fontSize = 18.sp, lineHeight = 24.sp, fontWeight = FontWeight.W700,
+                fontSize = size, lineHeight = size * 1.33f, fontWeight = FontWeight.W700,
                 color = when {
                     !l.synced || i == current -> Color.White
                     i < current -> Color.White.copy(alpha = .65f)
@@ -491,8 +552,8 @@ private fun Seek(p: PlayerState, song: Song, pos: Long, inset: Dp = 16.dp, inlin
 }
 
 @Composable
-private fun Controls(p: PlayerState, play: Dp = 68.dp, inset: Dp = 16.dp, vertical: Dp = 8.dp) = Row(
-    Modifier.fillMaxWidth().padding(horizontal = inset, vertical = vertical),
+private fun Controls(p: PlayerState, play: Dp = 68.dp, inset: Dp = 16.dp, vertical: Dp = 8.dp, modifier: Modifier = Modifier) = Row(
+    modifier.fillMaxWidth().padding(horizontal = inset, vertical = vertical),
     horizontalArrangement = Arrangement.SpaceBetween,
     verticalAlignment = Alignment.CenterVertically,
 ) {

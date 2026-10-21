@@ -164,6 +164,9 @@ data class Genre(val name: String, val songCount: Int)
 data class LyricLine(val ms: Long, val text: String)
 data class Lyrics(val synced: Boolean, val lines: List<LyricLine>)
 
+/** An LRC header line like `[ti:Song]` or `[ar:Artist]`, which some servers pass through as if it were lyrics. */
+fun isLrcTag(line: String) = line.trim().matches(Regex("""\[[a-zA-Z#]+:[^\]]*]"""))
+
 class ApiException(message: String) : Exception(message)
 
 fun JSONObject.s(k: String): String? = if (isNull(k)) null else optString(k)
@@ -511,7 +514,7 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
         val pick = list.firstOrNull { it.optBoolean("synced") } ?: list.firstOrNull()
         val synced = pick?.optBoolean("synced") == true
         val offset = pick?.optLong("offset") ?: 0
-        Lyrics(synced, pick?.list("line").orEmpty().map { LyricLine(if (synced) it.optLong("start") + offset else -1, it.optString("value")) })
+        Lyrics(synced, pick?.list("line").orEmpty().map { LyricLine(if (synced) it.optLong("start") + offset else -1, it.optString("value")) }.filterNot { isLrcTag(it.text) })
     }.takeIf { it.lines.isNotEmpty() }
 
     /** [param] is "id" for songs, "albumId" or "artistId" for those. */

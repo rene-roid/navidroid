@@ -115,6 +115,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import android.os.Build
 import androidx.compose.animation.core.animateFloatAsState
@@ -449,8 +450,9 @@ fun ListRow(title: String, subtitle: String, cover: @Composable () -> Unit, trai
 
 // ---- library --------------------------------------------------------------------------------
 
+/** [column]: the library as the side column of a landscape tablet, under the shell's Home and Search, instead of a page. */
 @Composable
-fun LibraryScreen() {
+fun LibraryScreen(column: Boolean = false) {
     val nav = LocalNav.current
     var tab by rememberSaveable { mutableStateOf("Playlists") }
     var onlySaved by rememberSaveable { mutableStateOf(false) }
@@ -482,8 +484,8 @@ fun LibraryScreen() {
             }
     }
 
-    // The search box scrolls away with the list and only the filters stay; in landscape, where height is short, the profile row goes too.
-    val wide = isWide()
+    // The search box scrolls away with the list and only the filters stay; where height is short (a phone in landscape), the profile row goes too.
+    val short = LocalConfiguration.current.screenHeightDp < 600
     var headerH by remember { mutableIntStateOf(0) }
     var hidden by remember { mutableFloatStateOf(0f) }
     val collapse = remember {
@@ -506,17 +508,20 @@ fun LibraryScreen() {
     }
 
     val profile = @Composable {
-        Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Avatar(34.dp) { nav.go(Route.Settings) }
-            Spacer(Modifier.width(12.dp))
-            Text("Your Library", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
+        Row(Modifier.padding(top = if (column) 4.dp else 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (!column) {
+                Avatar(34.dp) { nav.go(Route.Settings) }
+                Spacer(Modifier.width(12.dp))
+            }
+            Text("Your Library", style = if (column) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
             IconButton({ nav.go(Route.Downloads) }) { Icon(Icons.Rounded.DownloadForOffline, "Downloads") }
+            if (column) IconButton({ nav.go(Route.Settings) }) { Icon(Icons.Rounded.Settings, "Settings") }
         }
     }
 
     Column(Modifier.fillMaxSize().nestedScroll(collapse)) {
-        Column(Modifier.statusBarsPadding().padding(horizontal = 16.dp)) {
-            if (!wide) profile()
+        Column(Modifier.then(if (column) Modifier else Modifier.statusBarsPadding()).padding(horizontal = 16.dp)) {
+            if (!short) profile()
             Column(
                 Modifier.clipToBounds().layout { m, c ->
                     val p = m.measure(c)
@@ -526,7 +531,7 @@ fun LibraryScreen() {
                     layout(p.width, h) { p.place(0, h - p.height) }
                 },
             ) {
-                if (wide) profile()
+                if (short) profile()
                 Row(
                     Modifier.padding(top = 12.dp).fillMaxWidth().height(40.dp).clip(RoundedCornerShape(6.dp)).background(Tile).padding(start = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -646,7 +651,7 @@ fun LibraryScreen() {
                     }
                 }
             }
-            item("end") { BottomSpacer() }
+            item("end") { if (column) Spacer(Modifier.height(8.dp)) else BottomSpacer() }
         }
     }
 }
@@ -692,9 +697,9 @@ fun CollectionScreen(kind: Kind, id: String) {
         LazyColumn(Modifier.fillMaxSize().underBar(backdrop), state = list) {
             item("header") { BoxWithConstraints {
                 val mix = c?.mix
-                // Side by side only when the title gets real room; beside the landscape player the column is too narrow.
-                val row = wide && maxWidth >= 420.dp
-                val size = if (wide) 128.dp else 240.dp
+                val size = if (!wide) 240.dp else if (isTablet()) 200.dp else 128.dp
+                // Side by side only when the title gets real room beside the header, which is 1.4 covers wide: 420 dp for a phone's cover.
+                val row = wide && maxWidth >= size * 1.4f + 240.dp
                 val coverMod = Modifier.size(size).shadow(20.dp, RoundedCornerShape(6.dp)).clip(RoundedCornerShape(6.dp))
                 val covers = remember(c) { albumCovers(c?.songs.orEmpty()) }
                 val cover = @Composable {
@@ -907,7 +912,7 @@ fun ArtistScreen(id: String) {
         LazyColumn(Modifier.fillMaxSize().underBar(backdrop), state = list) {
             item("header") {
                 // In landscape the bar fades out whatever is under it, so the header starts below it.
-                Box(Modifier.fillMaxWidth().then(if (wide) Modifier.statusBarsPadding().padding(top = 56.dp).height(220.dp) else Modifier.height(340.dp))) {
+                Box(Modifier.fillMaxWidth().then(if (wide) Modifier.statusBarsPadding().padding(top = 56.dp).height(if (isTablet()) 300.dp else 220.dp) else Modifier.height(340.dp))) {
                     // The photo fades out into the shared background instead of meeting it at an edge, and at the sides too in landscape.
                     ArtistHeader(
                         a?.artist?.coverArt, image, remember(a) { (a?.albums.orEmpty() + a?.appearsOn.orEmpty()).mapNotNull { it.coverArt } }, color,
