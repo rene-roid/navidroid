@@ -453,6 +453,8 @@ fun LibraryScreen() {
     val nav = LocalNav.current
     var tab by rememberSaveable { mutableStateOf("Playlists") }
     var onlySaved by rememberSaveable { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
+    fun hit(vararg text: String?) = query.isBlank() || text.any { it?.contains(query.trim(), ignoreCase = true) == true }
     val pins by offline.pins.collectAsStateWithLifecycle()
     val playlists = rememberLoad("playlists") { api.playlists() }
     var creating by remember { mutableStateOf(false) }
@@ -466,11 +468,11 @@ fun LibraryScreen() {
     var albumsDone by remember { mutableStateOf(false) }
     val list = rememberLazyListState()
 
-    // Albums page in as you scroll.
+    // Albums page in as you scroll, or all the way through while searching so every album can match.
     LaunchedEffect(tab, onlySaved) {
         if (tab != "Albums" || onlySaved) return@LaunchedEffect
-        snapshotFlow { list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
-            .filter { it >= albums.size - 20 && !albumsDone }
+        snapshotFlow { if (!albumsDone && (query.isNotBlank() || (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= albums.size - 20)) albums.size else -1 }
+            .filter { it >= 0 }
             .distinctUntilChanged()
             .collect {
                 val page = runCatching { api.albumList("alphabeticalByName", 100, albums.size) }.getOrNull() ?: return@collect
@@ -479,7 +481,7 @@ fun LibraryScreen() {
             }
     }
 
-    // In landscape there is little height, so the profile row scrolls away with the list and only the filters stay.
+    // The search box scrolls away with the list and only the filters stay; in landscape, where height is short, the profile row goes too.
     val wide = isWide()
     var headerH by remember { mutableIntStateOf(0) }
     var hidden by remember { mutableFloatStateOf(0f) }
@@ -487,7 +489,7 @@ fun LibraryScreen() {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 if (available.y >= 0) return Offset.Zero
-                val take = minOf(-available.y, headerH - hidden)
+                val take = minOf(-available.y, headerH - hidden).coerceAtLeast(0f)
                 hidden += take
                 return Offset(0f, -take)
             }
@@ -502,27 +504,49 @@ fun LibraryScreen() {
         }
     }
 
-    Column(Modifier.fillMaxSize().then(if (wide) Modifier.nestedScroll(collapse) else Modifier)) {
+    val profile = @Composable {
+        Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Avatar(34.dp) { nav.go(Route.Settings) }
+            Spacer(Modifier.width(12.dp))
+            Text("Your Library", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
+            IconButton({ nav.go(Route.Downloads) }) { Icon(Icons.Rounded.DownloadForOffline, "Downloads") }
+        }
+    }
+
+    Column(Modifier.fillMaxSize().nestedScroll(collapse)) {
         Column(Modifier.statusBarsPadding().padding(horizontal = 16.dp)) {
-            Row(
+            if (!wide) profile()
+            Column(
                 Modifier.clipToBounds().layout { m, c ->
                     val p = m.measure(c)
                     headerH = p.height
-                    val h = if (wide) p.height - hidden.roundToInt().coerceIn(0, p.height) else p.height
+                    if (hidden > p.height) hidden = p.height.toFloat()
+                    val h = p.height - hidden.roundToInt()
                     layout(p.width, h) { p.place(0, h - p.height) }
-                }.padding(top = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                },
             ) {
-                Avatar(34.dp) { nav.go(Route.Settings) }
-                Spacer(Modifier.width(12.dp))
-                Text("Your Library", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
-                IconButton({ nav.go(Route.Downloads) }) { Icon(Icons.Rounded.DownloadForOffline, "Downloads") }
+                if (wide) profile()
+                Row(
+                    Modifier.padding(top = 12.dp).fillMaxWidth().height(40.dp).clip(RoundedCornerShape(6.dp)).background(Tile).padding(start = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.Search, null, Modifier.size(20.dp), tint = Sub)
+                    Spacer(Modifier.width(10.dp))
+                    Box(Modifier.weight(1f)) {
+                        if (query.isEmpty()) Text("Search your library", color = Sub, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                        BasicTextField(
+                            query, { query = it }, Modifier.fillMaxWidth(), singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White), cursorBrush = SolidColor(Green),
+                        )
+                    }
+                    if (query.isNotEmpty()) IconButton({ query = "" }) { Icon(Icons.Rounded.Close, "Clear", Modifier.size(20.dp), tint = Sub) }
+                }
             }
             val chipColors = FilterChipDefaults.filterChipColors(
                 containerColor = Tile, labelColor = Color.White, iconColor = Color.White,
                 selectedContainerColor = Green, selectedLabelColor = Color.Black, selectedLeadingIconColor = Color.Black,
             )
-            Row(Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // Narrows whichever tab is open to what you saved.
                 FilterChip(
                     onlySaved, { onlySaved = !onlySaved },
@@ -541,9 +565,10 @@ fun LibraryScreen() {
         // Rows fade out under the filters instead of being cut off by a hard line, once there is something above to fade.
         val topFade = Modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawWithContent {
             drawContent()
-            if (list.canScrollBackward) drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black), endY = 32.dp.toPx()), blendMode = BlendMode.DstIn)
+            if (list.canScrollBackward) drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black), endY = 24.dp.toPx()), blendMode = BlendMode.DstIn)
         }
-        LazyColumn(Modifier.fillMaxSize().then(topFade), state = list, contentPadding = PaddingValues(horizontal = 16.dp)) {
+        // The gap under the filters is list padding, so rows scroll right up to the filters before fading.
+        LazyColumn(Modifier.fillMaxSize().then(topFade), state = list, contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp)) {
             val pinnedIds = pins.map { "${it.kind}:${it.id}" }.toSet()
             @Composable
             fun mark(kind: Kind, id: String, saved: Boolean = false) {
@@ -573,14 +598,14 @@ fun LibraryScreen() {
                 Text("Nothing saved here yet. Tap the heart on a playlist, album or artist.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 24.dp))
             }
             val (mixes, ownPlaylists) = playlists.data.orEmpty()
-                .filter { !onlySaved || it.id in Likes.playlists }
+                .filter { (!onlySaved || it.id in Likes.playlists) && hit(it.tile().title, it.owner) }
                 .sortedBy { it.id !in Likes.playlists }.partition { it.mix != null }
             when (tab) {
                 "Playlists" -> {
-                    item("liked") {
+                    if (hit("Liked Songs")) item("liked") {
                         ListRow("Liked Songs", "Playlist", { LikedCover(Modifier.size(56.dp)) }, { mark(Kind.Liked, "liked") }) { nav.go(Route.Open(Kind.Liked, "liked")) }
                     }
-                    if (!onlySaved) item("new") {
+                    if (!onlySaved && query.isBlank()) item("new") {
                         ListRow("Create playlist", "Then add songs from any song's menu", { Box(Modifier.size(56.dp).background(Tile, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, null) } }) { creating = true }
                     }
                     items(ownPlaylists, key = { it.id }) { playlistRow(it) }
@@ -599,20 +624,20 @@ fun LibraryScreen() {
                 }
                 "Albums" -> {
                     if (onlySaved && savedAlbums.isEmpty()) emptySaved()
-                    items(if (onlySaved) savedAlbums else savedAlbums + albums.filter { it.id !in savedAlbumIds }, key = { it.id }) { a ->
+                    items((if (onlySaved) savedAlbums else savedAlbums + albums.filter { it.id !in savedAlbumIds }).filter { hit(it.name, it.artist) }, key = { it.id }) { a ->
                         ListRow(a.name, "Album • ${a.artist}", { Cover(a.coverArt, 120, Modifier.size(56.dp)) }, { mark(Kind.Album, a.id, a.id in savedAlbumIds) }) { nav.go(Route.Open(Kind.Album, a.id)) }
                     }
                 }
                 "Artists" -> {
                     if (onlySaved && savedArtists.isEmpty()) emptySaved()
-                    items(if (onlySaved) savedArtists else savedArtists + artists.data.orEmpty().filter { it.id !in savedArtistIds }, key = { it.id }) { a ->
+                    items((if (onlySaved) savedArtists else savedArtists + artists.data.orEmpty().filter { it.id !in savedArtistIds }).filter { hit(it.name) }, key = { it.id }) { a ->
                         ListRow(a.name, "Artist", { Cover(a.coverArt, 120, Modifier.size(56.dp), CircleShape) }, { mark(Kind.Artist, a.id, a.id in savedArtistIds) }) { nav.go(Route.Open(Kind.Artist, a.id)) }
                     }
                 }
                 else -> {
-                    val tiles = pinnedTiles(pins).filter { !onlySaved || saved(it.kind, it.id) }
+                    val tiles = pinnedTiles(pins).filter { (!onlySaved || saved(it.kind, it.id)) && hit(it.title, it.subtitle) }
                     if (tiles.isEmpty() && onlySaved) emptySaved()
-                    else if (tiles.isEmpty()) item("none") {
+                    else if (tiles.isEmpty() && query.isBlank()) item("none") {
                         Text("Tap the download button on a playlist or album to keep it on this phone.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 24.dp))
                     }
                     items(tiles, key = { "${it.kind}:${it.id}" }) { t ->
