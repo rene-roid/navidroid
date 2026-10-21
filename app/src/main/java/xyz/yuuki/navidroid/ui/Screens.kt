@@ -66,7 +66,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.layout
+import kotlin.math.roundToInt
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -471,9 +479,40 @@ fun LibraryScreen() {
             }
     }
 
-    Column(Modifier.fillMaxSize()) {
+    // In landscape there is little height, so the profile row scrolls away with the list and only the filters stay.
+    val wide = isWide()
+    var headerH by remember { mutableIntStateOf(0) }
+    var hidden by remember { mutableFloatStateOf(0f) }
+    val collapse = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (available.y >= 0) return Offset.Zero
+                val take = minOf(-available.y, headerH - hidden)
+                hidden += take
+                return Offset(0f, -take)
+            }
+
+            // It only comes back once the list is at the top.
+            override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                if (available.y <= 0) return Offset.Zero
+                val take = minOf(available.y, hidden)
+                hidden -= take
+                return Offset(0f, take)
+            }
+        }
+    }
+
+    Column(Modifier.fillMaxSize().then(if (wide) Modifier.nestedScroll(collapse) else Modifier)) {
         Column(Modifier.statusBarsPadding().padding(horizontal = 16.dp)) {
-            Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.clipToBounds().layout { m, c ->
+                    val p = m.measure(c)
+                    headerH = p.height
+                    val h = if (wide) p.height - hidden.roundToInt().coerceIn(0, p.height) else p.height
+                    layout(p.width, h) { p.place(0, h - p.height) }
+                }.padding(top = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Avatar(34.dp) { nav.go(Route.Settings) }
                 Spacer(Modifier.width(12.dp))
                 Text("Your Library", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
