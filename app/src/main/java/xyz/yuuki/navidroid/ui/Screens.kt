@@ -538,7 +538,12 @@ fun LibraryScreen() {
                 }
             }
         }
-        LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(horizontal = 16.dp)) {
+        // Rows fade out under the filters instead of being cut off by a hard line, once there is something above to fade.
+        val topFade = Modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawWithContent {
+            drawContent()
+            if (list.canScrollBackward) drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black), endY = 32.dp.toPx()), blendMode = BlendMode.DstIn)
+        }
+        LazyColumn(Modifier.fillMaxSize().then(topFade), state = list, contentPadding = PaddingValues(horizontal = 16.dp)) {
             val pinnedIds = pins.map { "${it.kind}:${it.id}" }.toSet()
             @Composable
             fun mark(kind: Kind, id: String, saved: Boolean = false) {
