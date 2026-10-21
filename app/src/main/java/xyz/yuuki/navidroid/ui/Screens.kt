@@ -722,6 +722,8 @@ fun CollectionScreen(kind: Kind, id: String) {
                                 // A playlist's wall is a backdrop for its cover, so it steps back a little.
                                 if (mix == null) drawRect(Color.Black.copy(alpha = .3f))
                                 drawRect(Brush.verticalGradient(.5f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
+                                // In landscape the wall stops short of the screen edges, so it fades out at the sides like the artist header.
+                                if (wide) drawRect(Brush.horizontalGradient(0f to Color.Transparent, .12f to Color.Black, .88f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
                             }
                         if (mix != null) MixFlow(mix, c?.coverArt, covers, fade) else PlaylistWall(covers, fade)
                         Column(Modifier.statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp)) {
@@ -904,14 +906,15 @@ fun ArtistScreen(id: String) {
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize().underBar(backdrop), state = list) {
             item("header") {
-                Box(Modifier.fillMaxWidth().height(if (wide) 220.dp else 340.dp)) {
+                // In landscape the bar fades out whatever is under it, so the header starts below it.
+                Box(Modifier.fillMaxWidth().then(if (wide) Modifier.statusBarsPadding().padding(top = 56.dp).height(220.dp) else Modifier.height(340.dp))) {
                     // The photo fades out into the shared background instead of meeting it at an edge, and at the sides too in landscape.
                     ArtistHeader(
                         a?.artist?.coverArt, image, remember(a) { (a?.albums.orEmpty() + a?.appearsOn.orEmpty()).mapNotNull { it.coverArt } }, color,
                         Modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawWithContent {
                             drawContent()
                             if (wide) drawRect(Brush.horizontalGradient(0f to Color.Transparent, .12f to Color.Black, .88f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
-                            drawRect(Brush.verticalGradient((if (wide) .45f else .6f) to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
+                            drawRect(if (wide) Brush.verticalGradient(0f to Color.Transparent, .12f to Color.Black, .45f to Color.Black, 1f to Color.Transparent) else Brush.verticalGradient(.6f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
                         },
                     )
                     Text(
