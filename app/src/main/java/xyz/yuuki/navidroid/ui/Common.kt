@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.draw.scale
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -211,7 +212,15 @@ object Likes {
 
 @Composable
 fun HeartButton(liked: Boolean, size: Dp = 28.dp, onClick: () -> Unit) = IconButton(onClick) {
-    Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (liked) "Remove from Your Library" else "Save to Your Library", Modifier.size(size), tint = if (liked) Accent else Sub)
+    if (liked) LikedHeart(Modifier.size(size), "Remove from Your Library")
+    else Icon(Icons.Rounded.FavoriteBorder, "Save to Your Library", Modifier.size(size), tint = Sub)
+}
+
+/** Accent-filled with a white rim, so it stands out on any cover-tinted background, even one close to the accent. */
+@Composable
+fun LikedHeart(modifier: Modifier, description: String?) = Box(modifier) {
+    Icon(Icons.Rounded.Favorite, description, Modifier.matchParentSize(), tint = Color.White)
+    Icon(Icons.Rounded.Favorite, null, Modifier.matchParentSize().scale(.82f), tint = Accent)
 }
 
 // ---- images ---------------------------------------------------------------------------------
@@ -380,7 +389,7 @@ fun PlayButton(playing: Boolean, size: Dp = 56.dp, onClick: () -> Unit) = Box(
 }
 
 @Composable
-fun FavoriteMark() = Icon(Icons.Rounded.Favorite, "Saved", Modifier.padding(end = 4.dp).size(14.dp), tint = Accent)
+fun FavoriteMark() = LikedHeart(Modifier.padding(end = 4.dp).size(14.dp), "Saved")
 
 @Composable
 fun DownloadedMark() = Icon(Icons.Rounded.ArrowCircleDown, "Downloaded", Modifier.padding(end = 4.dp).size(14.dp), tint = Accent)
@@ -406,7 +415,7 @@ fun TrackRow(song: Song, onClick: () -> Unit, number: Int? = null, showArt: Bool
                 Text(song.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        if (Likes.isLiked(song)) Icon(Icons.Rounded.Favorite, "Liked", Modifier.size(16.dp), tint = Accent)
+        if (Likes.isLiked(song)) LikedHeart(Modifier.size(16.dp), "Liked")
         SongMenu(song)
     }
 }

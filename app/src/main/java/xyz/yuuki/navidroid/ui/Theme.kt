@@ -27,6 +27,7 @@ val Elevated = Color(0xFF282828)
 val Tile = Color(0xFF2A2A2A)
 val Blue = Color(0xFF0085FF) // Navidrome's brand blue
 val Green = Color(0xFF1DB954)
+val Purple = Color(0xFF8B5CF6)
 
 /** Colour of buttons and highlights, picked in Settings; global so a change applies everywhere at once. */
 var Accent by mutableStateOf(Color(App.it.prefs.accent))

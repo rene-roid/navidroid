@@ -274,8 +274,8 @@ private fun AuroraSwitch(t: Toggle) = SettingRow(t.title, t.subtitle, { t.on = !
     Switch(t.on, { t.on = it }, colors = SwitchDefaults.colors(checkedTrackColor = Accent))
 }
 
-private val accents = listOf(Blue, Green)
-private val accentChoices = listOf(0 to "Navidrome blue", 1 to "Green", 2 to "Custom")
+private val accents = listOf(Blue, Green, Purple)
+private val accentChoices = listOf(0 to "Navidrome blue", 1 to "Green", 2 to "Purple", 3 to "Custom")
 
 private fun setAccent(c: Color) {
     Accent = c
@@ -427,7 +427,7 @@ fun SettingsScreen(onLogout: () -> Unit) {
 
         item { Group("Look") }
         item {
-            ChoiceRow("Button colour", accents.indexOf(Accent).takeIf { it >= 0 } ?: 2, accentChoices) {
+            ChoiceRow("Button colour", accents.indexOf(Accent).takeIf { it >= 0 } ?: accents.size, accentChoices) {
                 if (it < accents.size) setAccent(accents[it]) else pickingAccent = true
             }
         }

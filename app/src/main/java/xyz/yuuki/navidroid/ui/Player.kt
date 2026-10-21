@@ -198,7 +198,7 @@ fun MiniPlayer(p: PlayerState, onOpen: () -> Unit) {
             }
             IconButton({ Likes.toggle(song) }) {
                 val liked = Likes.isLiked(song)
-                Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Like", tint = if (liked) Accent else Color.White)
+                if (liked) LikedHeart(Modifier.size(24.dp), "Unlike") else Icon(Icons.Rounded.FavoriteBorder, "Like", tint = Color.White)
             }
             IconButton(p::toggle) {
                 if (p.loading) CircularProgressIndicator(Modifier.size(24.dp), Color.White, 2.5.dp)
@@ -283,7 +283,7 @@ private fun SongInfo(song: Song, onArtist: () -> Unit) = Row(Modifier.fillMaxWid
     }
     IconButton({ Likes.toggle(song) }) {
         val liked = Likes.isLiked(song)
-        Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Like", Modifier.size(28.dp), tint = if (liked) Accent else Color.White)
+        if (liked) LikedHeart(Modifier.size(28.dp), "Unlike") else Icon(Icons.Rounded.FavoriteBorder, "Like", Modifier.size(28.dp), tint = Color.White)
     }
 }
 
