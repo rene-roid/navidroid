@@ -6,6 +6,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -689,8 +690,10 @@ fun CollectionScreen(kind: Kind, id: String) {
     val backdrop = rememberGraphicsLayer()
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize().underBar(backdrop), state = list) {
-            item("header") {
+            item("header") { BoxWithConstraints {
                 val mix = c?.mix
+                // Side by side only when the title gets real room; beside the landscape player the column is too narrow.
+                val row = wide && maxWidth >= 420.dp
                 val size = if (wide) 128.dp else 240.dp
                 val coverMod = Modifier.size(size).shadow(20.dp, RoundedCornerShape(6.dp)).clip(RoundedCornerShape(6.dp))
                 val covers = remember(c) { albumCovers(c?.songs.orEmpty()) }
@@ -706,7 +709,7 @@ fun CollectionScreen(kind: Kind, id: String) {
                         else -> TileCover(kind, id, c?.coverArt, null, coverMod, 600)
                     }
                 }
-                if (wide) Row(Modifier.statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp), verticalAlignment = Alignment.Bottom) {
+                if (row) Row(Modifier.statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp), verticalAlignment = Alignment.Bottom) {
                     cover()
                     Column(Modifier.padding(start = 20.dp)) { CollectionInfo(kind, c) }
                 } else if (kind == Kind.Playlist) {
@@ -734,7 +737,7 @@ fun CollectionScreen(kind: Kind, id: String) {
                     Spacer(Modifier.height(20.dp))
                     CollectionInfo(kind, c)
                 }
-            }
+            } }
             item("actions") {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (c != null) PinButton(c)
@@ -770,7 +773,7 @@ private fun CollectionInfo(kind: Kind, c: Collection?) {
         maxLines = 3, overflow = TextOverflow.Ellipsis,
     )
     c?.description?.let { Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp), maxLines = 3, overflow = TextOverflow.Ellipsis) }
-    if (c != null) Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    if (c != null) FlowRow(Modifier.padding(top = 8.dp), itemVerticalAlignment = Alignment.CenterVertically) {
         c.by?.let { by ->
             Text(
                 by, style = MaterialTheme.typography.labelLarge,
