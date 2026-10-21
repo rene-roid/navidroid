@@ -726,15 +726,30 @@ fun ErrorText(msg: String) = Text(msg, Modifier.fillMaxWidth().padding(32.dp), s
 /** Whether the bar frosts the page behind it instead of covering it, so the aurora shows through. Blurring needs Android 12. */
 private val acrylic get() = auroraOn.on && Build.VERSION.SDK_INT >= 31
 
-/** Draws the page and records it into [layer] for [TopBar]. When [acrylic], the strip under the bar is left for the bar to draw frosted. */
+/**
+ * Draws the page and records it into [layer] for [TopBar]. When [acrylic], the strip under the bar is left for the bar to draw frosted.
+ * In landscape the bar only spans the page column, so a frosted box would cut a hard-edged block out of the aurora; there the page fades out under the title instead.
+ */
 @Composable
 private fun Modifier.underBar(layer: GraphicsLayer): Modifier {
     val density = LocalDensity.current
     val bar = WindowInsets.statusBars.getTop(density) + with(density) { 56.dp.toPx() }
-    val frost = acrylic
-    return drawWithContent {
+    val wide = isWide()
+    val frost = acrylic && !wide
+    val fade = acrylic && wide
+    // Clear behind the whole title even at large font scales, back to full strength just below the bar.
+    val fadeFrom = bar - with(density) { 12.dp.toPx() }
+    val fadeTo = bar + with(density) { 8.dp.toPx() }
+    return then(if (fade) Modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen } else Modifier).drawWithContent {
         layer.record { this@drawWithContent.drawContent() }
-        if (frost) clipRect(top = bar) { drawLayer(layer) } else drawLayer(layer)
+        when {
+            frost -> clipRect(top = bar) { drawLayer(layer) }
+            fade -> {
+                drawLayer(layer)
+                drawRect(Brush.verticalGradient(0f to Color.Transparent, fadeFrom / size.height to Color.Transparent, fadeTo / size.height to Color.Black), blendMode = BlendMode.DstIn)
+            }
+            else -> drawLayer(layer)
+        }
     }
 }
 
@@ -743,8 +758,8 @@ private fun Modifier.underBar(layer: GraphicsLayer): Modifier {
 private fun TopBar(title: String, color: Color, solid: Boolean, backdrop: GraphicsLayer) {
     val nav = LocalNav.current
     val t by animateFloatAsState(if (solid) 1f else 0f, tween(400), label = "bar")
-    val frost = acrylic
     val wide = isWide()
+    val frost = acrylic && !wide
     // In landscape it paints exactly the shell's background (the tint fading to Bg over the top 45% of the window), so it has no edges.
     val shellH = LocalWindowInfo.current.containerSize.height * .45f
     Box(Modifier.fillMaxWidth()) {
@@ -760,6 +775,8 @@ private fun TopBar(title: String, color: Color, solid: Boolean, backdrop: Graphi
                 if (!wide) drawRect(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .35f), Color.Transparent)), alpha = 1 - t)
                 when {
                     frost -> drawRect(lerp(color, Color.Black, .45f), alpha = .55f * t)
+                    // Landscape over the aurora: no bar at all, the page fades out under the title instead (see underBar).
+                    acrylic -> {}
                     wide -> drawRect(Brush.verticalGradient(listOf(color, Bg), startY = 0f, endY = shellH), alpha = t)
                     else -> drawRect(lerp(color, Color.Black, .45f), alpha = t)
                 }
