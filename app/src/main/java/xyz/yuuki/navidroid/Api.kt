@@ -191,6 +191,7 @@ class Prefs(ctx: Context) {
     var downloadBitrate by int("downloadBitrate", 160)
     var wifiOnlyDownloads by bool("wifiOnly", true)
     var auroraColors by int("auroraColors", 0)
+    var accent by int("accent", 0xFF0085FF.toInt())
     var lastSync by long("lastSync")
 
     /** Playlist ids saved to the library; Subsonic can't star playlists, so they live here. */

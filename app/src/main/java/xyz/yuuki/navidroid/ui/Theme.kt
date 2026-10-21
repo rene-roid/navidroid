@@ -6,13 +6,18 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import xyz.yuuki.navidroid.App
 import xyz.yuuki.navidroid.R
 
 // The server's "Spotify" theme.
@@ -20,8 +25,12 @@ val Bg = Color(0xFF121212)
 val Surface = Color(0xFF1F1F1F)
 val Elevated = Color(0xFF282828)
 val Tile = Color(0xFF2A2A2A)
+val Blue = Color(0xFF0085FF) // Navidrome's brand blue
 val Green = Color(0xFF1DB954)
-val GreenLight = Color(0xFF1ED760)
+
+/** Colour of buttons and highlights, picked in Settings; global so a change applies everywhere at once. */
+var Accent by mutableStateOf(Color(App.it.prefs.accent))
+val OnAccent get() = if (Accent.luminance() > .18f) Color.Black else Color.White
 val Sub = Color(0xFFB3B3B3)
 val Faint = Color(0xFF7A7A7A)
 val HomeTint = Color(0xFF2E2745)
@@ -50,9 +59,9 @@ private val typography = Typography(
 @Composable
 fun NavidroidTheme(content: @Composable () -> Unit) = MaterialTheme(
     colorScheme = darkColorScheme(
-        primary = Green,
-        onPrimary = Color.Black,
-        secondary = GreenLight,
+        primary = Accent,
+        onPrimary = OnAccent,
+        secondary = Accent,
         background = Bg,
         onBackground = Color.White,
         surface = Bg,

@@ -1,5 +1,8 @@
 package xyz.yuuki.navidroid.ui
 
+import android.content.ComponentName
+import android.content.Context
+import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -71,6 +74,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -78,6 +83,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -89,6 +95,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -109,8 +116,8 @@ import xyz.yuuki.navidroid.song
 
 val fieldColors @Composable get() = OutlinedTextFieldDefaults.colors(
     focusedContainerColor = Surface, unfocusedContainerColor = Surface, disabledContainerColor = Surface,
-    focusedBorderColor = Green, unfocusedBorderColor = Color.Transparent, cursorColor = Green,
-    focusedLabelColor = Green, unfocusedLabelColor = Sub, focusedLeadingIconColor = Green, unfocusedLeadingIconColor = Sub,
+    focusedBorderColor = Accent, unfocusedBorderColor = Color.Transparent, cursorColor = Accent,
+    focusedLabelColor = Accent, unfocusedLabelColor = Sub, focusedLeadingIconColor = Accent, unfocusedLeadingIconColor = Sub,
     focusedTrailingIconColor = Sub, unfocusedTrailingIconColor = Sub, focusedSupportingTextColor = Faint, unfocusedSupportingTextColor = Faint,
 )
 
@@ -161,7 +168,7 @@ fun LoginScreen(onDone: () -> Unit) {
     Box(Modifier.fillMaxSize().background(Bg)) {
         Box(
             Modifier.fillMaxWidth().height(400.dp)
-                .background(Brush.radialGradient(listOf(Green.copy(alpha = .35f), Green.copy(alpha = .08f), Color.Transparent))),
+                .background(Brush.radialGradient(listOf(Accent.copy(alpha = .35f), Accent.copy(alpha = .08f), Color.Transparent))),
         )
         Column(
             Modifier.fillMaxSize().systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 16.dp),
@@ -217,9 +224,9 @@ fun LoginScreen(onDone: () -> Unit) {
             }
             Button(
                 ::submit, Modifier.padding(top = 24.dp).fillMaxWidth().height(56.dp), enabled = canSubmit,
-                colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black, disabledContainerColor = Elevated, disabledContentColor = Faint),
+                colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent, disabledContainerColor = Elevated, disabledContentColor = Faint),
             ) {
-                if (busy) CircularProgressIndicator(Modifier.size(22.dp), color = Color.Black, strokeWidth = 2.dp)
+                if (busy) CircularProgressIndicator(Modifier.size(22.dp), color = OnAccent, strokeWidth = 2.dp)
                 else Text("Log in", color = LocalContentColor.current, style = MaterialTheme.typography.titleMedium)
             }
         }
@@ -256,7 +263,7 @@ private fun ChoiceRow(title: String, value: Int, options: List<Pair<Int, String>
         SettingRow(title, options.firstOrNull { it.first == value }?.second ?: "$value kbps", { open = true })
         DropdownMenu(open, { open = false }, containerColor = Elevated) {
             options.forEach { (v, label) ->
-                DropdownMenuItem({ Text(label) }, { onChange(v); open = false }, trailingIcon = { if (v == value) Icon(Icons.Rounded.Check, null, tint = Green) })
+                DropdownMenuItem({ Text(label) }, { onChange(v); open = false }, trailingIcon = { if (v == value) Icon(Icons.Rounded.Check, null, tint = Accent) })
             }
         }
     }
@@ -264,7 +271,61 @@ private fun ChoiceRow(title: String, value: Int, options: List<Pair<Int, String>
 
 @Composable
 private fun AuroraSwitch(t: Toggle) = SettingRow(t.title, t.subtitle, { t.on = !t.on }) {
-    Switch(t.on, { t.on = it }, colors = SwitchDefaults.colors(checkedTrackColor = Green))
+    Switch(t.on, { t.on = it }, colors = SwitchDefaults.colors(checkedTrackColor = Accent))
+}
+
+private val accents = listOf(Blue, Green)
+private val accentChoices = listOf(0 to "Navidrome blue", 1 to "Green", 2 to "Custom")
+
+private fun setAccent(c: Color) {
+    Accent = c
+    App.it.prefs.accent = c.toArgb()
+}
+
+/** Launcher entries in the manifest, one per icon. */
+private val icons = listOf("IconBlue", "IconGreen")
+private val iconChoices = listOf(0 to "Blue", 1 to "Green")
+
+private fun iconComponent(ctx: Context, i: Int) = ComponentName(ctx, "xyz.yuuki.navidroid.${icons[i]}")
+
+private fun currentIcon(ctx: Context) =
+    icons.indices.firstOrNull { ctx.packageManager.getComponentEnabledSetting(iconComponent(ctx, it)) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED } ?: 0
+
+/** Enables the chosen launcher entry before disabling the rest, so the app never has no icon. */
+private fun setIcon(ctx: Context, chosen: Int) = icons.indices.sortedBy { it != chosen }.forEach {
+    ctx.packageManager.setComponentEnabledSetting(
+        iconComponent(ctx, it),
+        if (it == chosen) PackageManager.COMPONENT_ENABLED_STATE_ENABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+        PackageManager.DONT_KILL_APP,
+    )
+}
+
+@Composable
+private fun CustomAccentDialog(onDismiss: () -> Unit) {
+    val hsv = remember { FloatArray(3).also { android.graphics.Color.colorToHSV(Accent.toArgb(), it) } }
+    var hue by remember { mutableFloatStateOf(hsv[0]) }
+    var sat by remember { mutableFloatStateOf(hsv[1]) }
+    var value by remember { mutableFloatStateOf(hsv[2]) }
+    val c = Color.hsv(hue, sat, value)
+    val sliderColors = SliderDefaults.colors(thumbColor = c, activeTrackColor = c, inactiveTrackColor = Color.White.copy(alpha = .15f))
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Elevated,
+        title = { Text("Custom colour") },
+        text = {
+            Column {
+                Box(Modifier.fillMaxWidth().height(48.dp).clip(CircleShape).background(c))
+                Text("Hue", Modifier.padding(top = 16.dp), style = MaterialTheme.typography.bodySmall)
+                Slider(hue, { hue = it }, valueRange = 0f..360f, colors = sliderColors)
+                Text("Saturation", style = MaterialTheme.typography.bodySmall)
+                Slider(sat, { sat = it }, colors = sliderColors)
+                Text("Brightness", style = MaterialTheme.typography.bodySmall)
+                Slider(value, { value = it }, valueRange = .3f..1f, colors = sliderColors)
+            }
+        },
+        confirmButton = { TextButton({ setAccent(c); onDismiss() }) { Text("Use", color = c) } },
+        dismissButton = { TextButton(onDismiss) { Text("Cancel", color = Color.White) } },
+    )
 }
 
 @Composable
@@ -283,6 +344,8 @@ fun SettingsScreen(onLogout: () -> Unit) {
     var mobile by remember { mutableIntStateOf(prefs.streamBitrateMobile) }
     var dl by remember { mutableIntStateOf(prefs.downloadBitrate) }
     var wifiOnly by remember { mutableStateOf(prefs.wifiOnlyDownloads) }
+    var pickingAccent by remember { mutableStateOf(false) }
+    var icon by remember { mutableIntStateOf(currentIcon(ctx)) }
 
     fun recheck() {
         checking = true
@@ -318,7 +381,7 @@ fun SettingsScreen(onLogout: () -> Unit) {
         item {
             Row(Modifier.padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) { Group("Servers") }
-                if (checking) CircularProgressIndicator(Modifier.padding(top = 20.dp).size(20.dp), color = Green, strokeWidth = 2.dp)
+                if (checking) CircularProgressIndicator(Modifier.padding(top = 20.dp).size(20.dp), color = Accent, strokeWidth = 2.dp)
                 else IconButton(::recheck, Modifier.padding(top = 20.dp)) { Icon(Icons.Rounded.Refresh, "Test all") }
             }
         }
@@ -333,7 +396,7 @@ fun SettingsScreen(onLogout: () -> Unit) {
                     else -> "$ms ms"
                 },
             ) {
-                if (ep == active) Icon(Icons.Rounded.Check, "In use", tint = Green)
+                if (ep == active) Icon(Icons.Rounded.Check, "In use", tint = Accent)
                 if (endpoints.size > 1) IconButton({
                     endpoints = endpoints - ep
                     prefs.endpoints = endpoints
@@ -363,6 +426,12 @@ fun SettingsScreen(onLogout: () -> Unit) {
         item { ChoiceRow("On mobile data", mobile) { mobile = it; prefs.streamBitrateMobile = it } }
 
         item { Group("Look") }
+        item {
+            ChoiceRow("Button colour", accents.indexOf(Accent).takeIf { it >= 0 } ?: 2, accentChoices) {
+                if (it < accents.size) setAccent(accents[it]) else pickingAccent = true
+            }
+        }
+        item { ChoiceRow("App icon", icon, iconChoices) { icon = it; setIcon(ctx, it) } }
         item { AuroraSwitch(auroraOn) }
         if (auroraOn.on) {
             item { ChoiceRow("Aurora colours", auroraMode, auroraModes) { auroraMode = it; prefs.auroraColors = it } }
@@ -373,7 +442,7 @@ fun SettingsScreen(onLogout: () -> Unit) {
         item { ChoiceRow("Download quality", dl) { dl = it; prefs.downloadBitrate = it; app.offline.sync() } }
         item {
             SettingRow("Download on Wi-Fi only", "Pinned playlists wait for Wi-Fi") {
-                Switch(wifiOnly, { wifiOnly = it; app.offline.setWifiOnly(it) }, colors = SwitchDefaults.colors(checkedTrackColor = Green))
+                Switch(wifiOnly, { wifiOnly = it; app.offline.setWifiOnly(it) }, colors = SwitchDefaults.colors(checkedTrackColor = Accent))
             }
         }
         item { SettingRow("Manage downloads", null, { nav.go(Route.Downloads) }) }
@@ -385,6 +454,7 @@ fun SettingsScreen(onLogout: () -> Unit) {
         }
         item { BottomSpacer() }
     }
+    if (pickingAccent) CustomAccentDialog { pickingAccent = false }
 }
 
 @Composable
@@ -425,9 +495,9 @@ fun DownloadsScreen() {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         { offline.sync() }, enabled = !syncing,
-                        colors = ButtonDefaults.buttonColors(containerColor = Green, contentColor = Color.Black),
+                        colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent),
                     ) {
-                        if (syncing) CircularProgressIndicator(Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp) else Icon(Icons.Rounded.Sync, null, Modifier.size(18.dp))
+                        if (syncing) CircularProgressIndicator(Modifier.size(16.dp), color = OnAccent, strokeWidth = 2.dp) else Icon(Icons.Rounded.Sync, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text(if (syncing) "Syncing" else "Sync now")
                     }
@@ -463,7 +533,7 @@ fun DownloadsScreen() {
                     Text("$have of $total downloaded", style = MaterialTheme.typography.bodySmall)
                     if (have < total) LinearProgressIndicator(
                         progress = { have / total.toFloat() }, Modifier.padding(top = 6.dp).fillMaxWidth().height(3.dp),
-                        color = Green, trackColor = Color.White.copy(alpha = .1f),
+                        color = Accent, trackColor = Color.White.copy(alpha = .1f),
                     )
                 }
                 IconButton({ offline.unpin(t.kind, t.id) }) { Icon(Icons.Rounded.Close, "Remove download", tint = Sub) }
@@ -479,7 +549,7 @@ fun DownloadsScreen() {
                         Text(s?.title ?: d.request.id, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         LinearProgressIndicator(
                             progress = { (d.percentDownloaded / 100f).coerceIn(0f, 1f) }, Modifier.padding(top = 6.dp).fillMaxWidth().height(3.dp),
-                            color = Green, trackColor = Color.White.copy(alpha = .1f),
+                            color = Accent, trackColor = Color.White.copy(alpha = .1f),
                         )
                     }
                 }

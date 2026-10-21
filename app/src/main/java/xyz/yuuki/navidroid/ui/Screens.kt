@@ -266,7 +266,7 @@ private fun QuickGrid(tiles: List<Tile>, modifier: Modifier = Modifier.padding(h
 
 @Composable
 fun Loading() = Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
-    CircularProgressIndicator(color = Green, strokeWidth = 3.dp, modifier = Modifier.size(32.dp))
+    CircularProgressIndicator(color = Accent, strokeWidth = 3.dp, modifier = Modifier.size(32.dp))
 }
 
 @Composable
@@ -536,7 +536,7 @@ fun LibraryScreen() {
                         if (query.isEmpty()) Text("Search your library", color = Sub, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
                         BasicTextField(
                             query, { query = it }, Modifier.fillMaxWidth(), singleLine = true,
-                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White), cursorBrush = SolidColor(Green),
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White), cursorBrush = SolidColor(Accent),
                         )
                     }
                     if (query.isNotEmpty()) IconButton({ query = "" }) { Icon(Icons.Rounded.Close, "Clear", Modifier.size(20.dp), tint = Sub) }
@@ -544,7 +544,7 @@ fun LibraryScreen() {
             }
             val chipColors = FilterChipDefaults.filterChipColors(
                 containerColor = Tile, labelColor = Color.White, iconColor = Color.White,
-                selectedContainerColor = Green, selectedLabelColor = Color.Black, selectedLeadingIconColor = Color.Black,
+                selectedContainerColor = Accent, selectedLabelColor = OnAccent, selectedLeadingIconColor = OnAccent,
             )
             Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // Narrows whichever tab is open to what you saved.
@@ -871,9 +871,9 @@ private fun PinButton(c: Collection) {
         Box(contentAlignment = Alignment.Center) {
             if (pinned && done < c.songs.size) CircularProgressIndicator(
                 progress = { if (c.songs.isEmpty()) 0f else done / c.songs.size.toFloat() },
-                Modifier.size(30.dp), color = Green, strokeWidth = 2.dp, trackColor = Color.White.copy(alpha = .15f),
+                Modifier.size(30.dp), color = Accent, strokeWidth = 2.dp, trackColor = Color.White.copy(alpha = .15f),
             )
-            Icon(Icons.Rounded.ArrowCircleDown, if (pinned) "Remove download" else "Download", Modifier.size(if (pinned && done < c.songs.size) 22.dp else 30.dp), tint = if (pinned) Green else Sub)
+            Icon(Icons.Rounded.ArrowCircleDown, if (pinned) "Remove download" else "Download", Modifier.size(if (pinned && done < c.songs.size) 22.dp else 30.dp), tint = if (pinned) Accent else Sub)
         }
     }
 }

@@ -211,7 +211,7 @@ object Likes {
 
 @Composable
 fun HeartButton(liked: Boolean, size: Dp = 28.dp, onClick: () -> Unit) = IconButton(onClick) {
-    Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (liked) "Remove from Your Library" else "Save to Your Library", Modifier.size(size), tint = if (liked) Green else Sub)
+    Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, if (liked) "Remove from Your Library" else "Save to Your Library", Modifier.size(size), tint = if (liked) Accent else Sub)
 }
 
 // ---- images ---------------------------------------------------------------------------------
@@ -373,17 +373,17 @@ fun SectionHeader(title: String, onMore: (() -> Unit)? = null) = Row(
 
 @Composable
 fun PlayButton(playing: Boolean, size: Dp = 56.dp, onClick: () -> Unit) = Box(
-    Modifier.size(size).clip(CircleShape).background(Green).clickable(onClick = onClick),
+    Modifier.size(size).clip(CircleShape).background(Accent).clickable(onClick = onClick),
     contentAlignment = Alignment.Center,
 ) {
-    Icon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (playing) "Pause" else "Play", Modifier.size(size * .55f), tint = Color.Black)
+    Icon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (playing) "Pause" else "Play", Modifier.size(size * .55f), tint = OnAccent)
 }
 
 @Composable
-fun FavoriteMark() = Icon(Icons.Rounded.Favorite, "Saved", Modifier.padding(end = 4.dp).size(14.dp), tint = Green)
+fun FavoriteMark() = Icon(Icons.Rounded.Favorite, "Saved", Modifier.padding(end = 4.dp).size(14.dp), tint = Accent)
 
 @Composable
-fun DownloadedMark() = Icon(Icons.Rounded.ArrowCircleDown, "Downloaded", Modifier.padding(end = 4.dp).size(14.dp), tint = Green)
+fun DownloadedMark() = Icon(Icons.Rounded.ArrowCircleDown, "Downloaded", Modifier.padding(end = 4.dp).size(14.dp), tint = Accent)
 
 @Composable
 fun TrackRow(song: Song, onClick: () -> Unit, number: Int? = null, showArt: Boolean = true, inset: androidx.compose.ui.unit.Dp = 16.dp) {
@@ -394,19 +394,19 @@ fun TrackRow(song: Song, onClick: () -> Unit, number: Int? = null, showArt: Bool
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = inset, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (number != null) Text("$number", Modifier.width(28.dp), color = if (current) Green else Sub, style = MaterialTheme.typography.bodyMedium)
+        if (number != null) Text("$number", Modifier.width(28.dp), color = if (current) Accent else Sub, style = MaterialTheme.typography.bodyMedium)
         if (showArt) {
             Cover(song.coverArt, 120, Modifier.size(48.dp))
             Spacer(Modifier.width(12.dp))
         }
         Column(Modifier.weight(1f)) {
-            Text(song.title, style = MaterialTheme.typography.bodyLarge, color = if (current) Green else Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(song.title, style = MaterialTheme.typography.bodyLarge, color = if (current) Accent else Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (states[song.id] == androidx.media3.exoplayer.offline.Download.STATE_COMPLETED) DownloadedMark()
                 Text(song.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
-        if (Likes.isLiked(song)) Icon(Icons.Rounded.Favorite, "Liked", Modifier.size(16.dp), tint = Green)
+        if (Likes.isLiked(song)) Icon(Icons.Rounded.Favorite, "Liked", Modifier.size(16.dp), tint = Accent)
         SongMenu(song)
     }
 }
@@ -550,7 +550,7 @@ fun NewPlaylist(songs: List<Song> = emptyList(), onDone: (String?) -> Unit) {
                 keyboardActions = KeyboardActions(onDone = { create() }),
             )
         },
-        confirmButton = { TextButton(::create, enabled = name.isNotBlank() && !busy) { Text("Create", color = Green) } },
+        confirmButton = { TextButton(::create, enabled = name.isNotBlank() && !busy) { Text("Create", color = Accent) } },
         dismissButton = { TextButton({ onDone(null) }) { Text("Cancel", color = Sub) } },
     )
 }

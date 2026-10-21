@@ -198,7 +198,7 @@ fun MiniPlayer(p: PlayerState, onOpen: () -> Unit) {
             }
             IconButton({ Likes.toggle(song) }) {
                 val liked = Likes.isLiked(song)
-                Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Like", tint = if (liked) Green else Color.White)
+                Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Like", tint = if (liked) Accent else Color.White)
             }
             IconButton(p::toggle) {
                 if (p.loading) CircularProgressIndicator(Modifier.size(24.dp), Color.White, 2.5.dp)
@@ -283,7 +283,7 @@ private fun SongInfo(song: Song, onArtist: () -> Unit) = Row(Modifier.fillMaxWid
     }
     IconButton({ Likes.toggle(song) }) {
         val liked = Likes.isLiked(song)
-        Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Like", Modifier.size(28.dp), tint = if (liked) Green else Color.White)
+        Icon(if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Like", Modifier.size(28.dp), tint = if (liked) Accent else Color.White)
     }
 }
 
@@ -505,14 +505,14 @@ private fun Controls(p: PlayerState, play: Dp = 68.dp, inset: Dp = 16.dp, vertic
 
 @Composable
 private fun ShuffleButton(p: PlayerState) = IconButton({ p.c.shuffleModeEnabled = !p.shuffle }) {
-    Icon(Icons.Rounded.Shuffle, "Shuffle", tint = if (p.shuffle) Green else Color.White)
+    Icon(Icons.Rounded.Shuffle, "Shuffle", tint = if (p.shuffle) Accent else Color.White)
 }
 
 @Composable
 private fun RepeatButton(p: PlayerState) = IconButton(p::cycleRepeat) {
     Icon(
         if (p.repeat == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "Repeat",
-        tint = if (p.repeat == Player.REPEAT_MODE_OFF) Color.White else Green,
+        tint = if (p.repeat == Player.REPEAT_MODE_OFF) Color.White else Accent,
     )
 }
 

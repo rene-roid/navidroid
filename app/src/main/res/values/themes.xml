@@ -1,7 +1,7 @@
 <resources>
     <style name="Theme.Navidroid" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>
-        <item name="android:colorAccent">#1DB954</item>
+        <item name="android:colorAccent">#0085FF</item>
     </style>
     <color name="bg">#121212</color>
 </resources>
