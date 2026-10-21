@@ -1,6 +1,15 @@
 package xyz.yuuki.navidroid.ui
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.calculateTargetValue
+import androidx.compose.animation.rememberSplineBasedDecay
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.runtime.getValue
@@ -68,14 +77,20 @@ import kotlin.math.ceil
 import kotlin.math.hypot
 
 // Animated headers for collections and artists, one idea per kind: a genre is a hand of cards, an album a record
-// sliding out of its sleeve, a playlist a wall of covers, a mix a cover flow, an artist their releases rolling past.
+// sliding out of its sleeve, a playlist its cover before a wall of its albums, a mix a cover flow, an artist their releases rolling past.
 
 /**
  * One cover per album, leaving out [except]'s album. Songs each carry their own cover id (`mf-…`) even within one
  * album, and an album's own is `al-<albumId>_…`, so they are told apart by album.
+ *
+ * A folder of loose songs is often tagged as one album (every song in "2021 nightcore" is on the album "2021 nightcore")
+ * while each file has its own art, so with too few albums to go round the songs' own covers make up the rest.
  */
-fun albumCovers(songs: List<Song>, except: String? = null) =
-    songs.filter { it.albumId != null && except?.contains(it.albumId) != true }.distinctBy { it.albumId }.mapNotNull { it.coverArt }
+fun albumCovers(songs: List<Song>, except: String? = null): List<String> {
+    val own = songs.filter { it.albumId != null && except?.contains(it.albumId) != true }
+    val perAlbum = own.distinctBy { it.albumId }.mapNotNull { it.coverArt }
+    return if (perAlbum.size >= 6) perAlbum else (perAlbum + own.mapNotNull { it.coverArt }).distinct()
+}
 
 /** [covers] minus those that failed to load, so a blank tile drops out and the next cover takes its place. */
 @Composable
@@ -149,7 +164,7 @@ fun GenreHeader(name: String, covers: List<String>, modifier: Modifier) = BoxWit
     hand.zip(spots).asReversed().forEach { (id, spot) ->
         val (dx, angle) = spot
         Cover(
-            id, 600, onError = { onError(id) }, modifier = Modifier.align(Alignment.Center).graphicsLayer {
+            id, 300, onError = { onError(id) }, modifier = Modifier.align(Alignment.Center).graphicsLayer {
                 translationX = s.toPx() * dx * fan.value
                 translationY = s.toPx() * (0.06f + abs(dx) * 0.2f * fan.value)
                 rotationZ = angle * fan.value
@@ -214,10 +229,12 @@ fun AlbumHeader(art: String?, spinning: Boolean, sleeve: Dp, modifier: Modifier 
 
 // ---- playlist: a wall of covers --------------------------------------------------------------------
 
-/** A playlist's header: its albums' covers on a tilted wall whose columns slide past each other, up and down. */
+/** A playlist's backdrop: its albums' covers on a tilted wall whose columns slide past each other, up and down. */
 @Composable
 fun PlaylistWall(covers: List<String>, modifier: Modifier) = BoxWithConstraints(modifier.clipToBounds()) {
-    val (ok, onError) = rememberLoadable(covers)
+    // Two dozen are plenty to look endless, and loading every cover of a long playlist starves the track list's art.
+    val (loadable, onError) = rememberLoadable(covers)
+    val ok = loadable.take(24)
     val t = rememberSeconds()
     val tint = rememberCoverColor(ok.firstOrNull())
     Canvas(Modifier.fillMaxSize()) { drawRect(Brush.verticalGradient(listOf(tint, lerp(tint, Color.Black, 0.5f)))) }
@@ -250,6 +267,11 @@ fun PlaylistWall(covers: List<String>, modifier: Modifier) = BoxWithConstraints(
     }
 }
 
+/** A playlist's own cover in front of its wall: square, lifted off it by a shadow and a faint rim. */
+@Composable
+fun PlaylistFront(art: String?, modifier: Modifier) =
+    Cover(art, 600, modifier.shadow(24.dp, RoundedCornerShape(6.dp)).border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(6.dp)), RoundedCornerShape(6.dp))
+
 // ---- mix: a cover flow ----------------------------------------------------------------------------
 
 /**
@@ -267,14 +289,45 @@ fun MixFlow(mix: Mix, coverArt: String?, covers: List<String>, modifier: Modifie
         drawRect(Brush.verticalGradient(0f to lerp(color, Color.White, 0.08f), 0.55f to lerp(color, Color.Black, 0.35f), 0.7f to lerp(color, Color.Black, 0.85f), 1f to Color(0xFF0A0A0A)))
         drawCircle(Brush.radialGradient(listOf(lerp(color, Color.White, 0.35f).copy(alpha = 0.55f), Color.Transparent), Offset(center.x, size.height * 0.45f), size.minDimension * 0.5f), size.minDimension * 0.5f, Offset(center.x, size.height * 0.45f))
     }
+    val side = minOf(maxWidth * 0.42f, maxHeight * 0.5f)
+    // Position along the flow in covers; whole numbers are a cover dead centre.
     val pos = remember { Animatable(0f) }
-    LaunchedEffect(n) {
-        if (n > 1) while (true) {
+    // Bumped by every swipe, which stops the spin or the stepping and starts the stepping again after a pause.
+    var touched by remember { mutableIntStateOf(0) }
+    LaunchedEffect(n > 1, touched) {
+        if (n <= 1) return@LaunchedEffect
+        // On arrival it spins through at least a dozen covers like a wheel, slowing to land on the mix's own tile.
+        if (touched == 0) pos.animateTo(n * ceil(12f / n), tween(2600, easing = CubicBezierEasing(0.1f, 0.75f, 0.1f, 1f)))
+        else delay(3000)
+        while (true) {
             delay(2800)
             pos.animateTo(kotlin.math.round(pos.value) + 1f, spring(0.85f, Spring.StiffnessVeryLow))
         }
     }
-    val side = minOf(maxWidth * 0.42f, maxHeight * 0.5f)
+    val scope = rememberCoroutineScope()
+    val decay = rememberSplineBasedDecay<Float>()
+    val step = with(LocalDensity.current) { side.toPx() * 0.78f }
+    val swipe = Modifier.pointerInput(n) {
+        if (n <= 1) return@pointerInput
+        val tracker = VelocityTracker()
+        detectHorizontalDragGestures(
+            onDragStart = {
+                tracker.resetTracking()
+                touched++
+            },
+            onHorizontalDrag = { change, dx ->
+                tracker.addPosition(change.uptimeMillis, change.position)
+                change.consume()
+                scope.launch { pos.snapTo(pos.value - dx / step) }
+            },
+            onDragEnd = {
+                // Flung, it coasts on and snaps to whichever cover it slows down at.
+                val v = -tracker.calculateVelocity().x / step
+                scope.launch { pos.animateTo(kotlin.math.round(decay.calculateTargetValue(pos.value, v)), spring(0.8f, Spring.StiffnessLow), v) }
+            },
+        )
+    }
+    Box(Modifier.fillMaxSize().then(swipe))
     // Each cover's place relative to the front one, wrapping round so the flow never runs out; drawn back to front.
     val places = List(n) { i -> i to ((i - pos.value) % n + n) % n }.map { (i, d) -> i to if (d > n / 2f) d - n else d }
     places.filter { abs(it.second) < 2.6f }.sortedByDescending { abs(it.second) }.forEach { (i, d) ->
@@ -291,7 +344,7 @@ fun MixFlow(mix: Mix, coverArt: String?, covers: List<String>, modifier: Modifie
             },
         ) {
             val id = ok[i]
-            val card = @Composable { m: Modifier -> if (id == null) MixCover(mix, coverArt, m) else Cover(id, 400, m, onError = { onError(id) }) }
+            val card = @Composable { m: Modifier -> if (id == null) MixCover(mix, coverArt, m) else Cover(id, 600, m, onError = { onError(id) }) }
             card(Modifier.size(side).shadow(14.dp, RoundedCornerShape(4.dp)))
             // The floor's reflection: the cover flipped, fading out fast.
             Box(

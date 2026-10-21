@@ -410,10 +410,10 @@ private fun GenreCard(g: xyz.yuuki.navidroid.Genre) {
     val bg = rememberGenreTint(g.name, art)
     Box(Modifier.height(100.dp).clip(RoundedCornerShape(8.dp)).background(bg).clickable { nav.go(Route.Open(Kind.Genre, g.name)) }) {
         // The cover again, blurred behind a wash that is solid under the title and thins out towards the art.
-        if (art != null) Cover(art, 200, Modifier.fillMaxSize().scale(1.3f).blur(10.dp), RoundedCornerShape(0.dp))
+        if (art != null) Cover(art, 300, Modifier.fillMaxSize().scale(1.3f).blur(10.dp), RoundedCornerShape(0.dp))
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(bg.copy(alpha = 0.92f), bg.copy(alpha = 0.6f), Color.Transparent))))
         if (art != null) Cover(
-            art, 200,
+            art, 300,
             Modifier.align(Alignment.BottomEnd).offset(x = 8.dp, y = 0.dp).size(78.dp).rotate(25f).shadow(10.dp, RoundedCornerShape(4.dp)),
         )
         Text(
@@ -630,7 +630,10 @@ fun CollectionScreen(kind: Kind, id: String) {
                         kind == Kind.Genre -> GenreHeader(id, remember(c) { genreHand(c) }, coverMod)
                         mix != null -> MixFlow(mix, c?.coverArt, covers, coverMod)
                         kind == Kind.Album -> AlbumHeader(c?.coverArt, playingThis, size)
-                        kind == Kind.Playlist -> PlaylistWall(covers, coverMod)
+                        kind == Kind.Playlist -> Box(coverMod) {
+                            PlaylistWall(covers, Modifier.fillMaxSize())
+                            PlaylistFront(c?.coverArt, Modifier.align(Alignment.Center).fillMaxSize(.6f))
+                        }
                         else -> TileCover(kind, id, c?.coverArt, null, coverMod, 600)
                     }
                 }
@@ -644,10 +647,18 @@ fun CollectionScreen(kind: Kind, id: String) {
                                 drawContent()
                                 // Dimmed under the status bar and the title so they stay readable over busy covers.
                                 drawRect(Brush.verticalGradient(0f to Color.Black.copy(alpha = .5f), .25f to Color.Transparent, .6f to Color.Transparent, 1f to Color.Black.copy(alpha = .7f)))
+                                // A playlist's wall is a backdrop for its cover, so it steps back a little.
+                                if (mix == null) drawRect(Color.Black.copy(alpha = .3f))
                                 drawRect(Brush.verticalGradient(.5f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
                             }
                         if (mix != null) MixFlow(mix, c?.coverArt, covers, fade) else PlaylistWall(covers, fade)
-                        Column(Modifier.statusBarsPadding().padding(top = 250.dp, start = 16.dp, end = 16.dp)) { CollectionInfo(kind, c) }
+                        Column(Modifier.statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp)) {
+                            // A playlist's own cover, which may be one set by hand, stands in front of its wall.
+                            if (mix == null) Box(Modifier.fillMaxWidth().height(194.dp), contentAlignment = Alignment.TopCenter) {
+                                PlaylistFront(c?.coverArt, Modifier.size(176.dp))
+                            } else Spacer(Modifier.height(194.dp))
+                            CollectionInfo(kind, c)
+                        }
                     }
                 } else Column(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp)) {
                     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { cover() }
