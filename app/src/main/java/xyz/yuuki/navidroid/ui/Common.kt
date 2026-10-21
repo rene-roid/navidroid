@@ -352,9 +352,13 @@ fun TileCover(kind: Kind, id: String, coverArt: String?, mix: Mix?, modifier: Mo
 
 // ---- building blocks ------------------------------------------------------------------------
 
-/** Landscape: screens split into two sides instead of stretching the portrait layout. */
+/** Landscape, or a tablet in portrait: the shell has a rail and screens split into two sides instead of stretching the phone layout. */
 @Composable
-fun isWide() = LocalConfiguration.current.run { screenWidthDp > screenHeightDp }
+fun isWide() = LocalConfiguration.current.run { screenWidthDp > screenHeightDp || screenWidthDp >= 600 }
+
+/** At least 600 dp both ways: room for labels on the rail and, in landscape, the library beside the page. */
+@Composable
+fun isTablet() = LocalConfiguration.current.run { minOf(screenWidthDp, screenHeightDp) >= 600 }
 
 /** Room at the end of every list for the mini player, the tab bar and the system navigation bar. */
 @Composable

@@ -101,7 +101,10 @@ import xyz.yuuki.navidroid.ui.Route
 import xyz.yuuki.navidroid.ui.SearchScreen
 import xyz.yuuki.navidroid.ui.SettingsScreen
 import xyz.yuuki.navidroid.ui.Sub
+import xyz.yuuki.navidroid.ui.isTablet
 import xyz.yuuki.navidroid.ui.isWide
+import xyz.yuuki.navidroid.ui.PlayerBar
+import androidx.compose.ui.platform.LocalConfiguration
 
 class MainActivity : ComponentActivity() {
     private var future: ListenableFuture<MediaController>? = null
@@ -165,7 +168,12 @@ private fun Shell(onLogout: () -> Unit) {
     val player = LocalPlayer.current
     var nowPlaying by rememberSaveable { mutableStateOf(false) }
     val wide = isWide()
-    val docked = wide && player?.song != null
+    val tablet = isTablet()
+    // A tablet in portrait has the rail but not the width for the player card, so the player is a bar under the page instead.
+    val bar = wide && LocalConfiguration.current.run { screenWidthDp <= screenHeightDp }
+    // A tablet in landscape has the width for the library as a column beside the page, in place of the rail.
+    val column = wide && !bar && tablet
+    val docked = wide && !bar && player?.song != null
 
     CompositionLocalProvider(LocalNav provides nav) {
         // The rail, the page and the player card share one sky tinted by the page, so it runs edge to edge.
@@ -175,9 +183,22 @@ private fun Shell(onLogout: () -> Unit) {
             Aurora(player?.song?.coverArt?.takeIf { listening }, nav.tints[page], nav.arts[page], Modifier.fillMaxSize(), plain = nav.tints[page] ?: HomeTint.takeIf { page == Route.Home })
             // Landscape has its own layout: an icon rail, the page, and while something plays the player as a card on the right.
             Row(Modifier.fillMaxSize()) {
-                if (wide) Column(
+                if (column) Column(
                     Modifier.fillMaxHeight().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Start + WindowInsetsSides.Vertical))
-                        .width(76.dp).padding(top = 10.dp, bottom = 8.dp),
+                        .width(300.dp).padding(start = 8.dp, top = 8.dp, bottom = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    val tab = nav.stack.first()
+                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Color.Black.copy(alpha = .35f)).padding(6.dp)) {
+                        ColumnItem("Home", if (tab == Route.Home) Icons.Rounded.Home else Icons.Outlined.Home, tab == Route.Home) { nav.tab(Route.Home) }
+                        ColumnItem("Search", Icons.Rounded.Search, tab == Route.Search) { nav.tab(Route.Search) }
+                    }
+                    Box(Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Color.Black.copy(alpha = .35f)).padding(top = 8.dp)) {
+                        LibraryScreen(column = true)
+                    }
+                } else if (wide) Column(
+                    Modifier.fillMaxHeight().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Start + WindowInsetsSides.Vertical))
+                        .width(if (tablet) 88.dp else 76.dp).padding(top = 10.dp, bottom = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -188,7 +209,8 @@ private fun Shell(onLogout: () -> Unit) {
                     RailItem("Downloads", Icons.Rounded.DownloadForOffline, top == Route.Downloads) { if (top != Route.Downloads) nav.go(Route.Downloads) }
                     RailItem("Settings", Icons.Rounded.Settings, top == Route.Settings) { if (top != Route.Settings) nav.go(Route.Settings) }
                 }
-                Box(Modifier.weight(1f).then(if (docked) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.End)))) {
+                Column(Modifier.weight(1f).then(if (docked) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.End)))) {
+                Box(Modifier.weight(1f)) {
                     NavDisplay(
                         backStack = nav.stack,
                         onBack = { nav.back() },
@@ -230,6 +252,8 @@ private fun Shell(onLogout: () -> Unit) {
                         Row(Modifier.fillMaxWidth().navigationBarsPadding().height(60.dp)) { Tabs(nav, Modifier.weight(1f)) }
                     }
                 }
+                if (bar && player != null) PlayerBar(player, { nowPlaying = true }, Modifier.navigationBarsPadding().padding(end = 12.dp, bottom = 10.dp).fillMaxWidth())
+                }
                 if (docked) DockedPlayer(
                     player,
                     Modifier.width(360.dp).fillMaxHeight().windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.End + WindowInsetsSides.Vertical))
@@ -238,13 +262,13 @@ private fun Shell(onLogout: () -> Unit) {
             }
 
             AnimatedVisibility(
-                nowPlaying && !wide && player?.song != null,
+                nowPlaying && (!wide || bar) && player?.song != null,
                 enter = slideInVertically(tween(320)) { it },
                 exit = slideOutVertically(tween(260)) { it },
             ) {
                 player?.let { NowPlaying(it) { nowPlaying = false } }
             }
-            BackHandler(nowPlaying && !wide) { nowPlaying = false }
+            BackHandler(nowPlaying && (!wide || bar)) { nowPlaying = false }
         }
     }
 }
@@ -260,13 +284,37 @@ private fun Tabs(nav: Nav, item: Modifier, rail: Boolean = false) {
     tab("Your Library", if (tab == Route.Library) Icons.Rounded.LibraryMusic else Icons.Outlined.LibraryMusic, tab == Route.Library) { nav.tab(Route.Library) }
 }
 
-/** Icon-only tab for the landscape rail; the selected one sits in a pill. */
+/** Tab for the rail; the selected one sits in a pill. Icon-only on a phone, labelled on a tablet, which has the room. */
 @Composable
-private fun RailItem(label: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit) = Box(
-    Modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).background(if (selected) Color.White.copy(alpha = .16f) else Color.Transparent).clickable(onClick = onClick),
-    contentAlignment = Alignment.Center,
+private fun RailItem(label: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit) {
+    val tint = if (selected) Color.White else Sub
+    val pill = if (selected) Color.White.copy(alpha = .16f) else Color.Transparent
+    if (isTablet()) Column(
+        Modifier.width(76.dp).clickable(remember { MutableInteractionSource() }, null, onClick = onClick).padding(vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(Modifier.size(56.dp, 32.dp).clip(RoundedCornerShape(16.dp)).background(pill), contentAlignment = Alignment.Center) {
+            Icon(icon, null, Modifier.size(24.dp), tint = tint)
+        }
+        Text(label, style = MaterialTheme.typography.labelMedium, color = tint, modifier = Modifier.padding(top = 4.dp), maxLines = 1)
+    } else Box(
+        Modifier.size(52.dp).clip(RoundedCornerShape(16.dp)).background(pill).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(icon, label, Modifier.size(26.dp), tint = tint)
+    }
+}
+
+/** Home and Search above the library column of a landscape tablet. */
+@Composable
+private fun ColumnItem(label: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit) = Row(
+    Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(horizontal = 14.dp),
+    verticalAlignment = Alignment.CenterVertically,
 ) {
-    Icon(icon, label, Modifier.size(26.dp), tint = if (selected) Color.White else Sub)
+    val tint = if (selected) Color.White else Sub
+    Icon(icon, null, Modifier.size(26.dp), tint = tint)
+    Spacer(Modifier.width(16.dp))
+    Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.W700, color = tint)
 }
 
 @Composable

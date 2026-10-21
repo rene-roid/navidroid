@@ -45,6 +45,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -171,7 +172,8 @@ fun LoginScreen(onDone: () -> Unit) {
                 .background(Brush.radialGradient(listOf(Accent.copy(alpha = .35f), Accent.copy(alpha = .08f), Color.Transparent))),
         )
         Column(
-            Modifier.fillMaxSize().systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 16.dp),
+            // Phone width on a tablet instead of fields across the whole screen.
+            Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Box(Modifier.size(200.dp)) {
