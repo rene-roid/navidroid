@@ -29,6 +29,10 @@ android {
     }
 
     buildTypes {
+        // A separate app beside the real one, to try this theme out.
+        debug {
+            applicationIdSuffix = ".preview"
+        }
         release {
             signingConfig = signingConfigs.getByName("debug")
             optimization {
