@@ -360,9 +360,9 @@ fun isWide() = LocalConfiguration.current.run { screenWidthDp > screenHeightDp |
 @Composable
 fun isTablet() = LocalConfiguration.current.run { minOf(screenWidthDp, screenHeightDp) >= 600 }
 
-/** Room at the end of every list for the mini player, the tab bar and the system navigation bar. */
+/** Room at the end of every list for the mini player, the tab bar, the fade above them and the system navigation bar. */
 @Composable
-fun BottomSpacer() = Spacer(Modifier.navigationBarsPadding().height(150.dp))
+fun BottomSpacer() = Spacer(Modifier.navigationBarsPadding().height(200.dp))
 
 @Composable
 fun Card(t: Tile, width: Dp = 150.dp, modifier: Modifier = Modifier) {
