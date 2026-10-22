@@ -95,7 +95,7 @@ layouts for phones and tablets in either orientation.
 - ♾️ **Autoplay**: when the queue runs out, it keeps going with similar songs, or with downloaded ones when you're offline
 - 🎤 **Synced Lyrics**: follow along line by line in the player
 - 👤 **Artist Pages**: albums, singles and EPs, and appearances in their own sections; songs with several artists let you pick which one to open
-- 🎨 **Accent Colour**: blue, green, purple or a custom colour, plus a matching launcher icon
+- 🎨 **Theme & Icon**: seven theme colours or your own, four aurora launcher icons plus the classic discs, and aurora palettes you can mix yourself
 - 👆 **Gestures & Buttons**: swipe the artwork or mini player to skip, swipe down to close the player; headset buttons play/pause, skip and go back
 - ⏯ **Persistent Queue**: picks up where you left off
 - 📶 **Quality Settings**: separate streaming quality for Wi-Fi and mobile data, and a monthly data usage readout

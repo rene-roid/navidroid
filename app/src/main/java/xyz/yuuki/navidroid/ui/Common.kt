@@ -127,6 +127,11 @@ sealed interface Route {
     data object Library : Route
     data object Settings : Route
     data object Downloads : Route
+    data object Appearance : Route
+    data object HiddenPlaylists : Route
+    data object SongCache : Route
+    data object ImageCache : Route
+    data object SavedInfo : Route
     data class Open(val kind: Kind, val id: String) : Route
     data class More(val section: String) : Route
 }

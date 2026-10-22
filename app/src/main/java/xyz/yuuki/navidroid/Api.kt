@@ -202,6 +202,10 @@ class Prefs(ctx: Context) {
     var downloadBitrate by int("downloadBitrate", 160)
     var wifiOnlyDownloads by bool("wifiOnly", true)
     var auroraColors by int("auroraColors", 0)
+    var auroraPalette by int("auroraPalette", 0)
+    /** The custom aurora palette, four ARGB colours joined by commas. */
+    var auroraCustom by str("auroraCustom")
+    var auroraBrightness by int("auroraBrightness", 100)
     var accent by int("accent", 0xFF0085FF.toInt())
     var lastSync by long("lastSync")
     var autoplay by bool("autoplay", false)
@@ -420,6 +424,9 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
     }
 
     fun savedBytes() = saved.listFiles()?.sumOf { it.length() } ?: 0L
+
+    /** The answers kept on disk, newest first. */
+    fun savedFiles() = saved.listFiles()?.sortedByDescending { it.lastModified() }.orEmpty()
 
     fun clearSaved() = saved.listFiles()?.forEach { it.delete() }
 

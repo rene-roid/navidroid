@@ -28,10 +28,58 @@
 
         <!-- launcher entries, one per app icon; Settings enables one at a time -->
         <activity-alias
-            android:name=".IconBlue"
+            android:name=".IconAurora"
             android:exported="true"
             android:icon="@mipmap/ic_launcher"
             android:roundIcon="@mipmap/ic_launcher"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconMoonrise"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_moonrise"
+            android:roundIcon="@mipmap/ic_launcher_moonrise"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconPeaks"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_peaks"
+            android:roundIcon="@mipmap/ic_launcher_peaks"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconEclipse"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_eclipse"
+            android:roundIcon="@mipmap/ic_launcher_eclipse"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".IconBlue"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_blue"
+            android:roundIcon="@mipmap/ic_launcher_blue"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

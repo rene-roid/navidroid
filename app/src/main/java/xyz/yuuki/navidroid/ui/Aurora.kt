@@ -54,6 +54,7 @@ uniform float2 scale;
 uniform float t;
 uniform float level;
 uniform float kick;
+uniform float gain;
 uniform float3 c0;
 uniform float3 c1;
 uniform float3 c2;
@@ -89,7 +90,7 @@ half4 main(float2 p) {
     float3 acc = curtain(uv, 0.30, 0.10 * lift, 0.23, 0.12, 0.0, c0, c1)
         + curtain(uv, 0.22, 0.08 * lift, 0.31, -0.09, 2.1, c1, c2)
         + curtain(uv, 0.37, 0.12 * lift, 0.17, 0.07, 4.7, c2, c3);
-    acc *= (0.85 + 0.15 * sin(t * 0.3)) * (0.8 + 0.25 * level + 0.15 * kick);
+    acc *= (0.85 + 0.15 * sin(t * 0.3)) * (0.8 + 0.25 * level + 0.15 * kick) * gain;
     // Dither against banding in the dark gradients.
     acc = clamp(acc + (hash(p + fract(t)) - 0.5) / 255.0, 0.0, 1.0);
     // Premultiplied with alpha = brightness, so dark parts let the sky through.
@@ -109,7 +110,25 @@ private val stars = Random(42).let { r -> List(150) { Star(r.nextFloat(), r.next
 
 private val auroraColors = LruCache<String, List<Color>>(50)
 
-val auroraModes = listOf(0 to "Song, classic when idle", 1 to "Song, else the page", 2 to "Always classic")
+val auroraModes = listOf(0 to "The song, else your palette", 1 to "The song, else the page", 2 to "Always your palette")
+
+/** Ready-made palettes for when no cover is colouring the sky; the last choice in Settings is [auroraCustom]. */
+val auroraPalettes = listOf(
+    "Classic" to defaults,
+    "Ocean" to listOf(Color(0xFF00E5FF), Color(0xFF2979FF), Color(0xFF00B8D4), Color(0xFF64FFDA)),
+    "Sunset" to listOf(Color(0xFFFFB86B), Color(0xFFFF6F91), Color(0xFFC86BFA), Color(0xFF7A5CFF)),
+    "Forest" to listOf(Color(0xFF4AFF9E), Color(0xFF2EE6C5), Color(0xFFB8FF5C), Color(0xFF3DDC97)),
+    "Ember" to listOf(Color(0xFFFF5E3A), Color(0xFFFF9F1C), Color(0xFFFF3D7F), Color(0xFFFFD166)),
+)
+
+/** Index into [auroraPalettes], or its size for [auroraCustom]. */
+var auroraPalette by mutableIntStateOf(App.it.prefs.auroraPalette)
+var auroraCustom by mutableStateOf(App.it.prefs.auroraCustom?.split(',')?.map { Color(it.toInt()) } ?: defaults)
+
+/** How bright the curtains glow, 1 as designed. */
+var auroraBrightness by mutableFloatStateOf(App.it.prefs.auroraBrightness / 100f)
+
+val ownPalette get() = auroraPalettes.getOrNull(auroraPalette)?.second ?: auroraCustom
 
 /** Index into [auroraModes]; global so the setting applies everywhere at once. */
 var auroraMode by mutableIntStateOf(App.it.prefs.auroraColors)
@@ -181,7 +200,7 @@ private fun Sky(art: String?, page: Color?, pageArt: String?, modifier: Modifier
         if (source == null) value = null
         else value = auroraColors[source] ?: coverPalette(ctx, source)?.let(::fromPalette)?.also { auroraColors.put(source, it) }
     }
-    val target = fromArt ?: pageSpread?.takeIf { followPage || auroraMode == 1 } ?: defaults
+    val target = fromArt ?: pageSpread?.takeIf { followPage || auroraMode == 1 } ?: ownPalette
     val colors = target.map { animateColorAsState(it, tween(1200), label = "aurora").value }
     val sky by animateColorAsState(if (target == defaults) Night else Color.hsv(hsv(target[0])[0], .6f, .2f), tween(1200), label = "sky")
 
@@ -221,7 +240,7 @@ private fun Sky(art: String?, page: Color?, pageArt: String?, modifier: Modifier
             if (shooting) drawShootingStar(clock.floatValue)
         },
     ) {
-        if (Build.VERSION.SDK_INT >= 33) Curtains(colors, phase, level, kick)
+        if (Build.VERSION.SDK_INT >= 33) Curtains(colors, phase, level, kick, auroraBrightness)
     }
 }
 
@@ -231,7 +250,7 @@ private fun Sky(art: String?, page: Color?, pageArt: String?, modifier: Modifier
  */
 @RequiresApi(33)
 @Composable
-private fun Curtains(colors: List<Color>, phase: FloatState, level: FloatState, kick: FloatState) {
+private fun Curtains(colors: List<Color>, phase: FloatState, level: FloatState, kick: FloatState, gain: Float) {
     val shader = remember { RuntimeShader(AURORA_AGSL) }
     val brush = remember { ShaderBrush(shader) }
     Canvas(Modifier.fillMaxWidth().fillMaxHeight(.5f / 6).graphicsLayer { scaleY = 6f; transformOrigin = TransformOrigin(.5f, 0f) }) {
@@ -240,6 +259,7 @@ private fun Curtains(colors: List<Color>, phase: FloatState, level: FloatState, 
         shader.setFloatUniform("t", phase.floatValue)
         shader.setFloatUniform("level", level.floatValue)
         shader.setFloatUniform("kick", kick.floatValue)
+        shader.setFloatUniform("gain", gain)
         colors.forEachIndexed { i, c -> shader.setFloatUniform("c$i", c.red, c.green, c.blue) }
         drawRect(brush)
     }

@@ -103,6 +103,12 @@ import xyz.yuuki.navidroid.ui.SearchScreen
 import xyz.yuuki.navidroid.ui.Selection
 import xyz.yuuki.navidroid.ui.SelectionBar
 import xyz.yuuki.navidroid.ui.SettingsScreen
+import xyz.yuuki.navidroid.ui.AppearanceScreen
+import xyz.yuuki.navidroid.ui.HiddenPlaylistsScreen
+import xyz.yuuki.navidroid.ui.SongCacheScreen
+import xyz.yuuki.navidroid.ui.ImageCacheScreen
+import xyz.yuuki.navidroid.ui.SavedInfoScreen
+import xyz.yuuki.navidroid.ui.migrateIcon
 import xyz.yuuki.navidroid.ui.Sub
 import xyz.yuuki.navidroid.ui.isTablet
 import xyz.yuuki.navidroid.ui.isWide
@@ -117,6 +123,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(SystemBarStyle.dark(AndroidColor.TRANSPARENT), SystemBarStyle.dark(AndroidColor.TRANSPARENT))
+        migrateIcon(this)
         loggedIn = App.it.prefs.loggedIn
         if (loggedIn) connect()
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -183,7 +190,9 @@ private fun Shell(onLogout: () -> Unit) {
         val page = nav.stack.last()
         Box(Modifier.fillMaxSize()) {
             val listening = player != null && (player.isPlaying || player.loading)
-            Aurora(player?.song?.coverArt?.takeIf { listening }, nav.tints[page], nav.arts[page], Modifier.fillMaxSize(), plain = nav.tints[page] ?: HomeTint.takeIf { page == Route.Home })
+            // On the appearance page the sky shows your own palette, so you see what you pick.
+            val editing = page == Route.Appearance
+            Aurora(player?.song?.coverArt?.takeIf { listening && !editing }, nav.tints[page], nav.arts[page], Modifier.fillMaxSize(), plain = nav.tints[page] ?: HomeTint.takeIf { page == Route.Home })
             // Landscape has its own layout: an icon rail, the page, and while something plays the player as a card on the right.
             Row(Modifier.fillMaxSize()) {
                 if (column) Column(
@@ -228,6 +237,11 @@ private fun Shell(onLogout: () -> Unit) {
                                     Route.Library -> LibraryScreen()
                                     Route.Settings -> SettingsScreen(onLogout)
                                     Route.Downloads -> DownloadsScreen()
+                                    Route.Appearance -> AppearanceScreen()
+                                    Route.HiddenPlaylists -> HiddenPlaylistsScreen()
+                                    Route.SongCache -> SongCacheScreen()
+                                    Route.ImageCache -> ImageCacheScreen()
+                                    Route.SavedInfo -> SavedInfoScreen()
                                     is Route.More -> MoreScreen(r.section)
                                     is Route.Open -> if (r.kind == Kind.Artist) ArtistScreen(r.id) else CollectionScreen(r.kind, r.id)
                                 }

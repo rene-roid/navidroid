@@ -8,6 +8,29 @@ import android.app.usage.NetworkStatsManager
 import android.net.ConnectivityManager
 import android.os.Process
 import java.util.Calendar
+import android.os.Build
+import android.text.format.DateUtils
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.Dp
+import androidx.core.graphics.drawable.toBitmap
+import coil3.compose.AsyncImage
+import org.json.JSONObject
+import java.io.File
+import xyz.yuuki.navidroid.Song
+import xyz.yuuki.navidroid.Streamed
+import xyz.yuuki.navidroid.s
+import xyz.yuuki.navidroid.tile
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -59,6 +82,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -301,6 +325,8 @@ private fun monthTraffic(ctx: Context): Pair<Long?, Long?> {
     return sum(ConnectivityManager.TYPE_WIFI) to sum(ConnectivityManager.TYPE_MOBILE)
 }
 
+private fun quality(br: Int) = qualities.firstOrNull { it.first == br }?.second ?: "$br kbps"
+
 private val qualities = listOf(0 to "Original", 320 to "320 kbps", 256 to "256 kbps", 192 to "192 kbps", 160 to "160 kbps", 128 to "128 kbps", 96 to "96 kbps")
 
 @Composable
@@ -317,23 +343,40 @@ private fun ChoiceRow(title: String, value: Int, options: List<Pair<Int, String>
 }
 
 @Composable
+private fun NextArrow() = Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = Sub)
+
+@Composable
 private fun AuroraSwitch(t: Toggle) = SettingRow(t.title, t.subtitle, { t.on = !t.on }) {
     Switch(t.on, { t.on = it }, colors = SwitchDefaults.colors(checkedTrackColor = Accent))
 }
 
-private val accents = listOf(Blue, Green, Purple)
-private val accentChoices = listOf(0 to "Navidrome blue", 1 to "Green", 2 to "Purple", 3 to "Custom")
+private val themes = listOf(
+    "Blue" to Blue, "Green" to Green, "Purple" to Purple, "Pink" to Color(0xFFEC4899),
+    "Amber" to Color(0xFFF59E0B), "Teal" to Color(0xFF14B8A6), "Red" to Color(0xFFEF4444),
+)
+
+private fun themeName() = themes.firstOrNull { it.second == Accent }?.first ?: "Custom"
 
 private fun setAccent(c: Color) {
     Accent = c
     App.it.prefs.accent = c.toArgb()
 }
 
-/** Launcher entries in the manifest, one per icon. */
-private val icons = listOf("IconBlue", "IconGreen")
-private val iconChoices = listOf(0 to "Blue", 1 to "Green")
+private val rainbow = Brush.sweepGradient(listOf(Color.Red, Color.Yellow, Color.Green, Color.Cyan, Color.Blue, Color.Magenta, Color.Red))
 
-private fun iconComponent(ctx: Context, i: Int) = ComponentName(ctx, "xyz.yuuki.navidroid.${icons[i]}")
+/** A launcher entry in the manifest; Aurora is on unless another was picked. */
+private class AppIcon(val alias: String, val name: String, val res: Int)
+
+private val icons = listOf(
+    AppIcon("IconAurora", "Aurora", R.mipmap.ic_launcher),
+    AppIcon("IconMoonrise", "Moonrise", R.mipmap.ic_launcher_moonrise),
+    AppIcon("IconPeaks", "Peaks", R.mipmap.ic_launcher_peaks),
+    AppIcon("IconEclipse", "Eclipse", R.mipmap.ic_launcher_eclipse),
+    AppIcon("IconBlue", "Classic", R.mipmap.ic_launcher_blue),
+    AppIcon("IconGreen", "Classic green", R.mipmap.ic_launcher_green),
+)
+
+private fun iconComponent(ctx: Context, i: Int) = ComponentName(ctx, "xyz.yuuki.navidroid.${icons[i].alias}")
 
 private fun currentIcon(ctx: Context) =
     icons.indices.firstOrNull { ctx.packageManager.getComponentEnabledSetting(iconComponent(ctx, it)) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED } ?: 0
@@ -347,9 +390,25 @@ private fun setIcon(ctx: Context, chosen: Int) = icons.indices.sortedBy { it != 
     )
 }
 
+/** Before Aurora was the default, the classic icon was; whoever picked one keeps it instead of getting two. */
+fun migrateIcon(ctx: Context) {
+    if (ctx.packageManager.getComponentEnabledSetting(iconComponent(ctx, 0)) != PackageManager.COMPONENT_ENABLED_STATE_DEFAULT) return
+    icons.indices.drop(1).firstOrNull { ctx.packageManager.getComponentEnabledSetting(iconComponent(ctx, it)) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED }
+        ?.let { setIcon(ctx, it) }
+}
+
+/** The launcher icon as the launcher shows it, in this phone's icon shape. */
 @Composable
-private fun CustomAccentDialog(onDismiss: () -> Unit) {
-    val hsv = remember { FloatArray(3).also { android.graphics.Color.colorToHSV(Accent.toArgb(), it) } }
+private fun LauncherIcon(res: Int, size: Dp) {
+    val ctx = LocalContext.current
+    val px = with(LocalDensity.current) { size.roundToPx() }
+    val bmp = remember(res, px) { ctx.getDrawable(res)!!.toBitmap(px, px).asImageBitmap() }
+    Image(bmp, null, Modifier.size(size))
+}
+
+@Composable
+private fun ColorDialog(initial: Color, onDismiss: () -> Unit, onPick: (Color) -> Unit) {
+    val hsv = remember { FloatArray(3).also { android.graphics.Color.colorToHSV(initial.toArgb(), it) } }
     var hue by remember { mutableFloatStateOf(hsv[0]) }
     var sat by remember { mutableFloatStateOf(hsv[1]) }
     var value by remember { mutableFloatStateOf(hsv[2]) }
@@ -370,7 +429,7 @@ private fun CustomAccentDialog(onDismiss: () -> Unit) {
                 Slider(value, { value = it }, valueRange = .3f..1f, colors = sliderColors)
             }
         },
-        confirmButton = { TextButton({ setAccent(c); onDismiss() }) { Text("Use", color = c) } },
+        confirmButton = { TextButton({ onPick(c); onDismiss() }) { Text("Use", color = c) } },
         dismissButton = { TextButton(onDismiss) { Text("Cancel", color = Color.White) } },
     )
 }
@@ -392,9 +451,7 @@ fun SettingsScreen(onLogout: () -> Unit) {
     var dl by remember { mutableIntStateOf(prefs.downloadBitrate) }
     var wifiOnly by remember { mutableStateOf(prefs.wifiOnlyDownloads) }
     var autoplay by remember { mutableStateOf(prefs.autoplay) }
-    val playlists = rememberLoad("playlists") { app.api.playlists() }
-    var pickingAccent by remember { mutableStateOf(false) }
-    var icon by remember { mutableIntStateOf(currentIcon(ctx)) }
+    val icon = remember { currentIcon(ctx) }
     var cleared by remember { mutableIntStateOf(0) }
     // Downloads, streamed songs, covers, saved info.
     val storage by produceState(listOf(0L, 0L, 0L, 0L), cleared) {
@@ -492,36 +549,18 @@ fun SettingsScreen(onLogout: () -> Unit) {
                 SettingRow("Download on Wi-Fi only", "Pinned playlists wait for Wi-Fi", { wifiOnly = !wifiOnly; app.offline.setWifiOnly(wifiOnly) }) {
                     Switch(wifiOnly, { wifiOnly = it; app.offline.setWifiOnly(it) }, colors = switchColors)
                 }
-                SettingRow("Manage downloads", "See what's kept on this phone", { nav.go(Route.Downloads) }) {
-                    Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = Sub)
-                }
+                SettingRow("Manage downloads", "See what's kept on this phone", { nav.go(Route.Downloads) }) { NextArrow() }
             }
         }
         item {
-            Section("Appearance", wide) {
-                ChoiceRow("Button colour", accents.indexOf(Accent).takeIf { it >= 0 } ?: accents.size, accentChoices) {
-                    if (it < accents.size) setAccent(accents[it]) else pickingAccent = true
+            Section("Personalise", wide) {
+                SettingRow(
+                    "Appearance", "${themeName()} theme • ${icons[icon].name} icon • Aurora ${if (auroraOn.on) "on" else "off"}", { nav.go(Route.Appearance) },
+                ) {
+                    LauncherIcon(icons[icon].res, 32.dp)
+                    NextArrow()
                 }
-                ChoiceRow("App icon", icon, iconChoices) { icon = it; setIcon(ctx, it) }
-            }
-        }
-        item {
-            Section("Background", wide) {
-                AuroraSwitch(auroraOn)
-                if (auroraOn.on) {
-                    ChoiceRow("Aurora colours", auroraMode, auroraModes) { auroraMode = it; prefs.auroraColors = it }
-                    auroraDetails.forEach { AuroraSwitch(it) }
-                }
-            }
-        }
-        val hidden = playlists.data.orEmpty().filter { it.id in Hidden.playlists }
-        if (hidden.isNotEmpty()) item {
-            Section("Hidden playlists", wide) {
-                hidden.forEach { p ->
-                    SettingRow(p.mix?.title ?: p.name, if (p.mix != null) "Mix" else "Playlist • ${p.owner}") {
-                        TextButton({ Hidden.set(listOf(p.id), false) }) { Text("Unhide", color = Accent) }
-                    }
-                }
+                SettingRow("Hidden playlists", Hidden.playlists.size.let { if (it == 0) "None hidden" else "$it hidden" }, { nav.go(Route.HiddenPlaylists) }) { NextArrow() }
             }
         }
         item {
@@ -538,24 +577,26 @@ fun SettingsScreen(onLogout: () -> Unit) {
                         storage.forEachIndexed { i, b -> if (b > 0) Box(Modifier.weight(b.toFloat()).fillMaxHeight().background(storageColors[i])) }
                     }
                 }
+                // Tapping one shows what's inside.
                 @Composable
-                fun part(i: Int, title: String, about: String, trailing: @Composable () -> Unit) = Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.padding(start = 16.dp).size(10.dp).clip(CircleShape).background(storageColors[i]))
-                    Box(Modifier.weight(1f)) { SettingRow(title, "${formatBytes(storage[i])} • $about", trailing = trailing) }
-                }
-                part(0, "Downloads", "Pinned playlists and albums") {
+                fun part(i: Int, title: String, about: String, open: Route, trailing: @Composable () -> Unit) =
+                    Row(Modifier.clickable { nav.go(open) }, verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.padding(start = 16.dp).size(10.dp).clip(CircleShape).background(storageColors[i]))
+                        Box(Modifier.weight(1f)) { SettingRow(title, "${formatBytes(storage[i])} • $about", trailing = trailing) }
+                    }
+                part(0, "Downloads", "Pinned playlists and albums", Route.Downloads) {
                     TextButton({ nav.go(Route.Downloads) }) { Text("Manage", color = Accent) }
                 }
-                part(1, "Song cache", "Songs heard or lined up next, up to 1 GB") {
+                part(1, "Song cache", "Songs heard or lined up next, up to 1 GB", Route.SongCache) {
                     TextButton({ clear(app.offline::clearStreamCache) }) { Text("Clear", color = Accent) }
                 }
-                part(2, "Image cache", "Covers, fetched again as you browse") {
+                part(2, "Image cache", "Covers, fetched again as you browse", Route.ImageCache) {
                     TextButton({
                         ctx.imageLoader.memoryCache?.clear()
                         clear { ctx.imageLoader.diskCache?.clear() }
                     }) { Text("Clear", color = Accent) }
                 }
-                part(3, "Saved info", "Albums, artists and playlists, to open fast and offline") {
+                part(3, "Saved info", "Albums, artists and playlists, to open fast and offline", Route.SavedInfo) {
                     TextButton({ clear { app.api.clearSaved() } }) { Text("Clear", color = Accent) }
                 }
             }
@@ -563,7 +604,6 @@ fun SettingsScreen(onLogout: () -> Unit) {
         item {
             Section("Data used this month", wide) {
                 val (wifiBytes, mobileBytes) = traffic
-                fun quality(br: Int) = qualities.firstOrNull { it.first == br }?.second ?: "$br kbps"
                 SettingRow("Wi-Fi", "Streaming at ${quality(wifi)}") { Text(wifiBytes?.let(::formatBytes) ?: "—") }
                 SettingRow("Mobile data", "Streaming at ${quality(mobile)}") { Text(mobileBytes?.let(::formatBytes) ?: "—") }
                 Text(
@@ -579,7 +619,6 @@ fun SettingsScreen(onLogout: () -> Unit) {
         }
         item { BottomSpacer() }
     }
-    if (pickingAccent) CustomAccentDialog { pickingAccent = false }
 }
 
 @Composable
@@ -694,4 +733,263 @@ fun DownloadsScreen() {
         confirmButton = { TextButton({ offline.unpinAll(); confirmClear = false }) { Text("Remove", color = Color(0xFFF15E6C)) } },
         dismissButton = { TextButton({ confirmClear = false }) { Text("Cancel", color = Color.White) } },
     )
+}
+
+/** A round choice with its name under it; [fill] paints the circle. */
+@Composable
+private fun Swatch(name: String, fill: Brush, selected: Boolean, onClick: () -> Unit) = Column(
+    Modifier.width(72.dp).clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).padding(vertical = 6.dp),
+    horizontalAlignment = Alignment.CenterHorizontally,
+) {
+    Box(Modifier.size(48.dp).border(2.dp, if (selected) Color.White else Color.Transparent, CircleShape).padding(5.dp).clip(CircleShape).background(fill))
+    Text(name, Modifier.padding(top = 4.dp), style = MaterialTheme.typography.labelMedium, color = if (selected) Color.White else Sub, textAlign = TextAlign.Center, maxLines = 2)
+}
+
+@Composable
+private fun Swatches(content: @Composable () -> Unit) =
+    FlowRow(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) { content() }
+
+private fun setPalette(i: Int) {
+    auroraPalette = i
+    App.it.prefs.auroraPalette = i
+}
+
+private fun setCustom(i: Int, c: Color) {
+    auroraCustom = auroraCustom.toMutableList().also { it[i] = c }
+    App.it.prefs.auroraCustom = auroraCustom.joinToString(",") { it.toArgb().toString() }
+}
+
+@Composable
+fun AppearanceScreen() {
+    val ctx = LocalContext.current
+    val prefs = App.it.prefs
+    var icon by remember { mutableIntStateOf(currentIcon(ctx)) }
+    // What the colour dialog is editing: the theme, or one of the custom aurora colours.
+    var editing by remember { mutableStateOf<Pair<Color, (Color) -> Unit>?>(null) }
+    val wide = Modifier.widthIn(max = 640.dp).fillMaxWidth()
+    LazyColumn(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+        item { Box(wide) { BackTitle("Appearance") } }
+        item {
+            Section("Theme", wide) {
+                Text("Buttons, sliders and highlights", Modifier.padding(start = 16.dp, top = 8.dp), style = MaterialTheme.typography.bodySmall)
+                Swatches {
+                    themes.forEach { (name, c) -> Swatch(name, SolidColor(c), Accent == c) { setAccent(c) } }
+                    val custom = themes.none { it.second == Accent }
+                    Swatch("Custom", if (custom) SolidColor(Accent) else rainbow, custom) { editing = Accent to ::setAccent }
+                }
+            }
+        }
+        item {
+            Section("App icon", wide) {
+                FlowRow(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    icons.forEachIndexed { i, ic ->
+                        Column(
+                            Modifier.width(84.dp).clip(RoundedCornerShape(12.dp)).clickable { icon = i; setIcon(ctx, i) }.padding(vertical = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Box(Modifier.border(2.dp, if (i == icon) Accent else Color.Transparent, RoundedCornerShape(18.dp)).padding(5.dp)) { LauncherIcon(ic.res, 56.dp) }
+                            Text(ic.name, Modifier.padding(top = 4.dp), style = MaterialTheme.typography.labelMedium, color = if (i == icon) Color.White else Sub, textAlign = TextAlign.Center, maxLines = 2)
+                        }
+                    }
+                }
+                Text(
+                    "Your launcher may take a few seconds to show the new one.", style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                )
+            }
+        }
+        item {
+            Section("Aurora", wide) {
+                AuroraSwitch(auroraOn)
+                if (auroraOn.on) {
+                    Text("Your palette", Modifier.padding(start = 16.dp, top = 8.dp), style = MaterialTheme.typography.bodyLarge)
+                    Text("Shown when no cover is colouring the sky, like right now", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.bodySmall)
+                    Swatches {
+                        auroraPalettes.forEachIndexed { i, (name, colors) -> Swatch(name, Brush.sweepGradient(colors + colors[0]), auroraPalette == i) { setPalette(i) } }
+                        Swatch("Custom", Brush.sweepGradient(auroraCustom + auroraCustom[0]), auroraPalette == auroraPalettes.size) { setPalette(auroraPalettes.size) }
+                    }
+                    if (auroraPalette == auroraPalettes.size) Row(
+                        Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Tap to change", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                        auroraCustom.forEachIndexed { i, c ->
+                            Box(Modifier.size(40.dp).clip(CircleShape).background(c).clickable { editing = c to { setCustom(i, it) } })
+                        }
+                    }
+                    if (Build.VERSION.SDK_INT >= 33) Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                        Text("Brightness", style = MaterialTheme.typography.bodyLarge)
+                        Slider(
+                            auroraBrightness, { auroraBrightness = it }, valueRange = .4f..1.8f,
+                            onValueChangeFinished = { prefs.auroraBrightness = (auroraBrightness * 100).toInt() },
+                            colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent, inactiveTrackColor = Color.White.copy(alpha = .15f)),
+                        )
+                    }
+                    ChoiceRow("Colours come from", auroraMode, auroraModes) { auroraMode = it; prefs.auroraColors = it }
+                    auroraDetails.forEach { AuroraSwitch(it) }
+                }
+            }
+        }
+        item { BottomSpacer() }
+    }
+    editing?.let { (c, pick) -> ColorDialog(c, { editing = null }, pick) }
+}
+
+@Composable
+fun HiddenPlaylistsScreen() {
+    val playlists = rememberLoad("playlists") { App.it.api.playlists() }
+    val hidden = playlists.data.orEmpty().filter { it.id in Hidden.playlists }
+    val wide = Modifier.widthIn(max = 640.dp).fillMaxWidth()
+    LazyColumn(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+        item { Box(wide) { BackTitle("Hidden playlists") } }
+        item {
+            Text(
+                if (hidden.isEmpty() && !playlists.loading) "Nothing hidden. To hide playlists, long-press them in your library and tap Hide."
+                else "They stay on the server, just out of your home and library on this phone.",
+                wide.padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        items(hidden, key = { it.id }) { p ->
+            val t = p.tile()
+            Row(wide.padding(start = 16.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                TileCover(t.kind, t.id, t.coverArt, t.mix, Modifier.size(48.dp), 120)
+                Box(Modifier.weight(1f)) {
+                    SettingRow(t.title, if (p.mix != null) "Mix" else "Playlist • ${p.owner}") {
+                        TextButton({ Hidden.set(listOf(p.id), false) }) { Text("Unhide", color = Accent) }
+                    }
+                }
+            }
+        }
+        item { BottomSpacer() }
+    }
+}
+
+/** The figures on top of a cache page. */
+@Composable
+private fun CacheSummary(title: String, about: String) =
+    Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = .06f)).padding(16.dp)) {
+        Text(title, style = MaterialTheme.typography.titleLarge)
+        Text(about, style = MaterialTheme.typography.bodySmall)
+    }
+
+@Composable
+fun SongCacheScreen() {
+    val songs by produceState<List<Streamed>?>(null) { value = withContext(Dispatchers.IO) { App.it.offline.streamed() } }
+    LazyColumn(Modifier.fillMaxSize()) {
+        item { BackTitle("Song cache") }
+        songs?.let { list ->
+            item {
+                CacheSummary(
+                    "${list.size} songs • ${formatBytes(list.sumOf { it.bytes })}",
+                    "Last heard first. Songs you play stay here so replays cost no data, and the next ones are fetched ahead " +
+                        "so they start at once; ${list.count { !it.whole }} are only that first bit.",
+                )
+            }
+            items(list, key = { "${it.id}@${it.bitrate}" }) { CachedSong(it) }
+        }
+        item { BottomSpacer() }
+    }
+}
+
+@Composable
+private fun CachedSong(c: Streamed) {
+    // One small request per song; the answer is kept in saved info like any other.
+    val song by produceState<Song?>(null, c.id) { value = runCatching { Song.from(App.it.api.call("getSong", "id" to c.id).getJSONObject("song")) }.getOrNull() }
+    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Cover(song?.coverArt, 120, Modifier.size(48.dp))
+        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+            Text(song?.title ?: c.id, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                listOfNotNull(song?.artist, (if (c.whole) "" else "First ") + formatBytes(c.bytes), quality(c.bitrate)).joinToString(" • "),
+                style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+fun ImageCacheScreen() {
+    val ctx = LocalContext.current
+    // Coil keeps each image as <key>.1 beside its headers in <key>.0.
+    val files by produceState<List<File>?>(null) {
+        value = withContext(Dispatchers.IO) {
+            ctx.imageLoader.diskCache?.directory?.toFile()?.listFiles { f -> f.name.endsWith(".1") }?.sortedByDescending { it.lastModified() }.orEmpty()
+        }
+    }
+    LazyVerticalGrid(
+        GridCells.Adaptive(96.dp), Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item(span = { GridItemSpan(maxLineSpan) }) { BackTitle("Image cache") }
+        files?.let { list ->
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Box(Modifier.padding(bottom = 8.dp)) {
+                    CacheSummary("${list.size} images • ${formatBytes(list.sumOf { it.length() })}", "Covers and artist photos, newest first, up to 512 MB.")
+                }
+            }
+            items(list, key = { it.name }) { f ->
+                AsyncImage(f, null, Modifier.aspectRatio(1f).clip(RoundedCornerShape(6.dp)).background(Tile), contentScale = ContentScale.Crop)
+            }
+        }
+        item(span = { GridItemSpan(maxLineSpan) }) { BottomSpacer() }
+    }
+}
+
+private val savedKinds = mapOf(
+    "album" to "Album", "artist" to "Artist", "playlist" to "Playlist", "song" to "Song", "playlists" to "Your playlists",
+    "albumList2" to "Album shelf", "artists" to "All artists", "starred2" to "Liked", "searchResult3" to "Search",
+    "genres" to "Genres", "songsByGenre" to "Genre", "similarSongs2" to "Similar songs", "topSongs" to "Top songs",
+    "artistInfo2" to "Artist info", "lyricsList" to "Lyrics", "randomSongs" to "Random songs",
+)
+
+/** What a saved server answer is about: its kind, and the name of the thing or a count of what's in it. */
+private fun describeSaved(f: File): Pair<String, String?> = runCatching {
+    val r = JSONObject(f.readText()).getJSONObject("subsonic-response")
+    val k = r.keys().asSequence().first { r.opt(it) is JSONObject }
+    val o = r.getJSONObject(k)
+    (savedKinds[k] ?: k) to (o.s("name") ?: o.s("title")
+        ?: o.keys().asSequence().mapNotNull { a -> o.optJSONArray(a)?.let { "${it.length()} × $a" } }.joinToString().ifEmpty { null })
+}.getOrDefault("Unreadable" to null)
+
+@Composable
+fun SavedInfoScreen() {
+    val files by produceState<List<File>?>(null) { value = withContext(Dispatchers.IO) { App.it.api.savedFiles() } }
+    var open by remember { mutableStateOf<File?>(null) }
+    LazyColumn(Modifier.fillMaxSize()) {
+        item { BackTitle("Saved info") }
+        files?.let { list ->
+            item {
+                CacheSummary(
+                    "${list.size} answers • ${formatBytes(list.sumOf { it.length() })}",
+                    "The server's last answers, so pages open at once and work offline. Newest first; tap one to read it.",
+                )
+            }
+            items(list, key = { it.name }) { f ->
+                val about by produceState<Pair<String, String?>?>(null, f) { value = withContext(Dispatchers.IO) { describeSaved(f) } }
+                SettingRow(
+                    about?.let { it.second ?: it.first } ?: "…",
+                    listOfNotNull(about?.first?.takeIf { about?.second != null }, formatBytes(f.length()), DateUtils.getRelativeTimeSpanString(f.lastModified()))
+                        .joinToString(" • "),
+                    { open = f },
+                )
+            }
+        }
+        item { BottomSpacer() }
+    }
+    open?.let { f ->
+        val text by produceState<String?>(null, f) {
+            value = withContext(Dispatchers.IO) { runCatching { JSONObject(f.readText()).toString(2) }.getOrElse { "Couldn't read it" }.take(50_000) }
+        }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { open = null },
+            containerColor = Elevated,
+            title = { Text(describeSaved(f).let { it.second ?: it.first }, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            text = {
+                Text(
+                    text ?: "…", Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
+                    fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 14.sp, color = Sub,
+                )
+            },
+            confirmButton = { TextButton({ open = null }) { Text("Close", color = Accent) } },
+        )
+    }
 }

@@ -8,6 +8,7 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheWriter
+import androidx.media3.datasource.cache.ContentMetadata
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
@@ -283,10 +284,26 @@ class Offline(private val app: App) {
 
     fun clearStreamCache() = streamCache.keys.toList().forEach(streamCache::removeResource)
 
+    /** What the stream cache holds, last heard first. */
+    fun streamed() = streamCache.keys.map { key ->
+        val spans = streamCache.getCachedSpans(key)
+        val bytes = spans.sumOf { it.length }
+        Streamed(
+            key.substringBeforeLast('@'),
+            key.substringAfterLast('@').removeSuffix("mp3").toIntOrNull() ?: 0,
+            bytes,
+            ContentMetadata.getContentLength(streamCache.getContentMetadata(key)).let { it > 0 && bytes >= it },
+            spans.maxOfOrNull { it.lastTouchTimestamp } ?: 0,
+        )
+    }.sortedByDescending { it.touched }
+
     companion object {
         const val CHANNEL = "downloads"
     }
 }
+
+/** A song in the stream cache; [bitrate] 0 is the original file, and it isn't [whole] when only its start was fetched ahead. */
+class Streamed(val id: String, val bitrate: Int, val bytes: Long, val whole: Boolean, val touched: Long)
 
 class DownloadSvc : DownloadService(1, DEFAULT_FOREGROUND_NOTIFICATION_UPDATE_INTERVAL, Offline.CHANNEL, R.string.downloads, 0) {
     private val offline get() = (application as App).offline
