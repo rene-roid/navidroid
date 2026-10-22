@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/icon.svg" width="96" alt="navidroid" />
+<img src="app/src/main/res/drawable-nodpi/icon_aurora.png" width="128" alt="navidroid" />
 
 # navidroid
 
