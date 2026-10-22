@@ -759,6 +759,27 @@ private fun setCustom(i: Int, c: Color) {
     App.it.prefs.auroraCustom = auroraCustom.joinToString(",") { it.toArgb().toString() }
 }
 
+private val auroraDefault get() = auroraOn.on && auroraDetails.all { it.on } && auroraMode == 0 && auroraPalette == 0 &&
+    auroraBrightness == 1f && auroraCustom == auroraPalettes[0].second
+
+private fun resetAurora() {
+    auroraOn.on = true
+    auroraDetails.forEach { it.on = true }
+    auroraMode = 0
+    App.it.prefs.auroraColors = 0
+    setPalette(0)
+    auroraCustom = auroraPalettes[0].second
+    App.it.prefs.auroraCustom = null
+    auroraBrightness = 1f
+    App.it.prefs.auroraBrightness = 100
+}
+
+/** Shown in a section's header while it differs from how the app ships. */
+@Composable
+private fun ResetButton(show: Boolean, onClick: () -> Unit) {
+    if (show) TextButton(onClick) { Text("Reset", color = Accent) }
+}
+
 @Composable
 fun AppearanceScreen() {
     val ctx = LocalContext.current
@@ -766,11 +787,16 @@ fun AppearanceScreen() {
     var icon by remember { mutableIntStateOf(currentIcon(ctx)) }
     // What the colour dialog is editing: the theme, or one of the custom aurora colours.
     var editing by remember { mutableStateOf<Pair<Color, (Color) -> Unit>?>(null) }
+    var confirmReset by remember { mutableStateOf(false) }
+    fun resetIcon() {
+        icon = 0
+        setIcon(ctx, 0)
+    }
     val wide = Modifier.widthIn(max = 640.dp).fillMaxWidth()
     LazyColumn(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
         item { Box(wide) { BackTitle("Appearance") } }
         item {
-            Section("Theme", wide) {
+            Section("Theme", wide, action = { ResetButton(Accent != Blue) { setAccent(Blue) } }) {
                 Text("Buttons, sliders and highlights", Modifier.padding(start = 16.dp, top = 8.dp), style = MaterialTheme.typography.bodySmall)
                 Swatches {
                     themes.forEach { (name, c) -> Swatch(name, SolidColor(c), Accent == c) { setAccent(c) } }
@@ -780,7 +806,7 @@ fun AppearanceScreen() {
             }
         }
         item {
-            Section("App icon", wide) {
+            Section("App icon", wide, action = { ResetButton(icon != 0, ::resetIcon) }) {
                 FlowRow(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     icons.forEachIndexed { i, ic ->
                         Column(
@@ -799,7 +825,7 @@ fun AppearanceScreen() {
             }
         }
         item {
-            Section("Aurora", wide) {
+            Section("Aurora", wide, action = { ResetButton(!auroraDefault, ::resetAurora) }) {
                 AuroraSwitch(auroraOn)
                 if (auroraOn.on) {
                     Text("Your palette", Modifier.padding(start = 16.dp, top = 8.dp), style = MaterialTheme.typography.bodyLarge)
@@ -829,9 +855,29 @@ fun AppearanceScreen() {
                 }
             }
         }
+        if (Accent != Blue || icon != 0 || !auroraDefault) item {
+            Box(wide.padding(8.dp)) {
+                TextButton({ confirmReset = true }) { Text("Reset all to defaults", color = Color(0xFFF15E6C)) }
+            }
+        }
         item { BottomSpacer() }
     }
     editing?.let { (c, pick) -> ColorDialog(c, { editing = null }, pick) }
+    if (confirmReset) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { confirmReset = false },
+        containerColor = Elevated,
+        title = { Text("Reset appearance?") },
+        text = { Text("Back to the blue theme, the Aurora icon and the classic aurora with everything on. Your custom colours are cleared.") },
+        confirmButton = {
+            TextButton({
+                setAccent(Blue)
+                resetIcon()
+                resetAurora()
+                confirmReset = false
+            }) { Text("Reset", color = Color(0xFFF15E6C)) }
+        },
+        dismissButton = { TextButton({ confirmReset = false }) { Text("Cancel", color = Color.White) } },
+    )
 }
 
 @Composable
