@@ -192,11 +192,12 @@ fun MiniPlayer(p: PlayerState, onOpen: () -> Unit) {
     val color = rememberCoverColor(song.coverArt, Elevated)
     val pos = rememberPosition(p, 500)
     Box(
-        Modifier.padding(horizontal = 8.dp).fillMaxWidth().height(58.dp).clip(RoundedCornerShape(6.dp))
-            .background(color).swipeToSkip(p, song).clickable(onClick = onOpen),
+        Modifier.padding(horizontal = 8.dp).fillMaxWidth().height(58.dp)
+            .background(Brush.horizontalGradient(listOf(lerp(color, Bg, .2f), lerp(color, Bg, .6f))), RoundedCornerShape(18.dp))
+            .glass(RoundedCornerShape(18.dp)).swipeToSkip(p, song).clickable(onClick = onOpen),
     ) {
         Row(Modifier.fillMaxSize().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Cover(song.coverArt, 120, Modifier.size(42.dp))
+            Cover(song.coverArt, 120, Modifier.size(42.dp), RoundedCornerShape(12.dp))
             Column(Modifier.weight(1f).padding(horizontal = 10.dp)) {
                 Text(song.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.basicMarquee())
                 Text(song.artist, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = .7f), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -321,8 +322,8 @@ private fun rememberPullToClose(onClose: () -> Unit): Modifier {
 private fun SwipeArt(p: PlayerState, song: Song) = Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp)) {
     Cover(
         song.coverArt, 600,
-        Modifier.fillMaxWidth().aspectRatio(1f).swipeToSkip(p, song).shadow(24.dp, RoundedCornerShape(8.dp)),
-        RoundedCornerShape(8.dp),
+        Modifier.fillMaxWidth().aspectRatio(1f).swipeToSkip(p, song).shadow(24.dp, RoundedCornerShape(20.dp)),
+        RoundedCornerShape(20.dp),
     )
 }
 

@@ -286,7 +286,7 @@ fun MixFlow(mix: Mix, coverArt: String?, covers: List<String>, modifier: Modifie
     val ok = listOf(null) + loadable.take(9)
     val n = ok.size
     Canvas(Modifier.fillMaxSize()) {
-        drawRect(Brush.verticalGradient(0f to lerp(color, Color.White, 0.08f), 0.55f to lerp(color, Color.Black, 0.35f), 0.7f to lerp(color, Color.Black, 0.85f), 1f to Color(0xFF0A0A0A)))
+        drawRect(Brush.verticalGradient(0f to lerp(color, Color.White, 0.08f), 0.55f to lerp(color, Color.Black, 0.35f), 0.7f to lerp(color, Color.Black, 0.85f), 1f to Bg))
         drawCircle(Brush.radialGradient(listOf(lerp(color, Color.White, 0.35f).copy(alpha = 0.55f), Color.Transparent), Offset(center.x, size.height * 0.45f), size.minDimension * 0.5f), size.minDimension * 0.5f, Offset(center.x, size.height * 0.45f))
     }
     val side = minOf(maxWidth * 0.42f, maxHeight * 0.5f)

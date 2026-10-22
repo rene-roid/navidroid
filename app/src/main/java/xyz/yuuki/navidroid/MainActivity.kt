@@ -87,6 +87,8 @@ import xyz.yuuki.navidroid.ui.CollectionScreen
 import xyz.yuuki.navidroid.ui.DockedPlayer
 import xyz.yuuki.navidroid.ui.DownloadsScreen
 import xyz.yuuki.navidroid.ui.HomeTint
+import xyz.yuuki.navidroid.ui.Accent
+import xyz.yuuki.navidroid.ui.glass
 import xyz.yuuki.navidroid.ui.HomeScreen
 import xyz.yuuki.navidroid.ui.LibraryScreen
 import xyz.yuuki.navidroid.ui.LocalNav
@@ -201,11 +203,11 @@ private fun Shell(onLogout: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     val tab = nav.stack.first()
-                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Color.Black.copy(alpha = .35f)).padding(6.dp)) {
+                    Column(Modifier.fillMaxWidth().glass(RoundedCornerShape(22.dp)).padding(6.dp)) {
                         ColumnItem("Home", if (tab == Route.Home) Icons.Rounded.Home else Icons.Outlined.Home, tab == Route.Home) { nav.tab(Route.Home) }
                         ColumnItem("Search", Icons.Rounded.Search, tab == Route.Search) { nav.tab(Route.Search) }
                     }
-                    Box(Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(Color.Black.copy(alpha = .35f)).padding(top = 8.dp)) {
+                    Box(Modifier.weight(1f).fillMaxWidth().glass(RoundedCornerShape(22.dp)).padding(top = 8.dp)) {
                         LibraryScreen(column = true)
                     }
                 } else if (wide) Column(
@@ -309,7 +311,7 @@ private fun Tabs(nav: Nav, item: Modifier, rail: Boolean = false) {
 @Composable
 private fun RailItem(label: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit) {
     val tint = if (selected) Color.White else Sub
-    val pill = if (selected) Color.White.copy(alpha = .16f) else Color.Transparent
+    val pill = if (selected) Accent.copy(alpha = .28f) else Color.Transparent
     if (isTablet()) Column(
         Modifier.width(76.dp).clickable(remember { MutableInteractionSource() }, null, onClick = onClick).padding(vertical = 4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,

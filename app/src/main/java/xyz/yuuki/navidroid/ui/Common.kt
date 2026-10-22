@@ -81,6 +81,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -314,7 +315,7 @@ fun SelectionBar(modifier: Modifier = Modifier) {
             if (all.isNotEmpty()) action(all)
         }
     }
-    Column(modifier.padding(horizontal = 8.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Elevated).padding(bottom = 6.dp)) {
+    Column(modifier.padding(horizontal = 8.dp).fillMaxWidth().background(Bg.copy(alpha = .85f), RoundedCornerShape(22.dp)).glass(RoundedCornerShape(22.dp)).padding(bottom = 6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(Selection::clear) { Icon(Icons.Rounded.Close, "Cancel") }
             Text("${items.size} selected", style = MaterialTheme.typography.titleMedium)
@@ -370,7 +371,7 @@ fun coverRequest(ctx: Context, id: String, size: Int): ImageRequest.Builder {
 
 @Composable
 fun Cover(
-    id: String?, size: Int, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(4.dp), alpha: Float = 1f, colorFilter: ColorFilter? = null,
+    id: String?, size: Int, modifier: Modifier = Modifier, shape: Shape = RoundedCornerShape(10.dp), alpha: Float = 1f, colorFilter: ColorFilter? = null,
     onError: (() -> Unit)? = null,
 ) {
     val ctx = LocalContext.current
@@ -421,7 +422,7 @@ fun MixCover(mix: Mix, coverArt: String?, modifier: Modifier = Modifier) {
     ) {
         if (value == null && mix.subject != null) value = runCatching { App.it.api.artistCover(mix.subject) }.getOrNull() ?: coverArt
     }
-    BoxWithConstraints(modifier.aspectRatio(1f).clip(RoundedCornerShape(6.dp)).background(Elevated)) {
+    BoxWithConstraints(modifier.aspectRatio(1f).clip(RoundedCornerShape(10.dp)).background(Elevated)) {
         val w = maxWidth
         val sp = with(LocalDensity.current) { { f: Float -> (w * f).toSp() } }
         val shadow = Shadow(Color(0x40000000), androidx.compose.ui.geometry.Offset(0f, 2f), 12f)
@@ -461,7 +462,7 @@ fun MixCover(mix: Mix, coverArt: String?, modifier: Modifier = Modifier) {
 
 @Composable
 fun LikedCover(modifier: Modifier = Modifier) = BoxWithConstraints(
-    modifier.aspectRatio(1f).clip(RoundedCornerShape(4.dp)).background(Brush.linearGradient(listOf(Color(0xFF450AF5), Color(0xFFC4EFD9)))),
+    modifier.aspectRatio(1f).clip(RoundedCornerShape(10.dp)).background(Brush.linearGradient(listOf(Color(0xFF2EE6C5), Color(0xFF48B4FF), Color(0xFF8E6CFF), Color(0xFFFF6FC1)))),
     contentAlignment = Alignment.Center,
 ) {
     Icon(Icons.Rounded.Favorite, null, Modifier.size(maxWidth * .38f), tint = Color.White)
@@ -469,7 +470,7 @@ fun LikedCover(modifier: Modifier = Modifier) = BoxWithConstraints(
 
 @Composable
 fun GenreCover(name: String, modifier: Modifier = Modifier) = BoxWithConstraints(
-    modifier.aspectRatio(1f).clip(RoundedCornerShape(4.dp)).background(Color(xyz.yuuki.navidroid.paletteColor(name))),
+    modifier.aspectRatio(1f).clip(RoundedCornerShape(10.dp)).background(Color(xyz.yuuki.navidroid.paletteColor(name))),
 ) {
     Text(name, Modifier.padding(maxWidth * .08f), fontWeight = FontWeight.W800, fontSize = with(LocalDensity.current) { (maxWidth * .14f).toSp() }, maxLines = 2)
 }
@@ -501,7 +502,7 @@ fun BottomSpacer() = Spacer(Modifier.navigationBarsPadding().height(200.dp))
 @Composable
 fun Card(t: Tile, width: Dp = 150.dp, modifier: Modifier = Modifier) {
     val nav = LocalNav.current
-    Column(modifier.width(width).clip(RoundedCornerShape(6.dp)).pickable(t) { nav.open(t) }.padding(6.dp)) {
+    Column(modifier.width(width).clip(RoundedCornerShape(14.dp)).pickable(t) { nav.open(t) }.padding(6.dp)) {
         TileCover(t.kind, t.id, t.coverArt, t.mix, Modifier.fillMaxWidth())
         Spacer(Modifier.height(8.dp))
         Text(t.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -520,7 +521,7 @@ fun SectionHeader(title: String, onMore: (() -> Unit)? = null) = Row(
 
 @Composable
 fun PlayButton(playing: Boolean, size: Dp = 56.dp, onClick: () -> Unit) = Box(
-    Modifier.size(size).clip(CircleShape).background(Accent).clickable(onClick = onClick),
+    Modifier.size(size).shadow(16.dp, CircleShape, ambientColor = Accent, spotColor = Accent).clip(CircleShape).background(AccentGlow).clickable(onClick = onClick),
     contentAlignment = Alignment.Center,
 ) {
     Icon(if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow, if (playing) "Pause" else "Play", Modifier.size(size * .55f), tint = OnAccent)

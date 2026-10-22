@@ -250,10 +250,10 @@ private fun QuickGrid(tiles: List<Tile>, modifier: Modifier = Modifier.padding(h
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 row.forEach { t ->
                     Row(
-                        Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(4.dp)).background(Tile).pickable(t) { nav.open(t) },
+                        Modifier.weight(1f).height(56.dp).glass(RoundedCornerShape(14.dp)).pickable(t) { nav.open(t) },
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        TileCover(t.kind, t.id, t.coverArt, t.mix, Modifier.size(56.dp), 120)
+                        TileCover(t.kind, t.id, t.coverArt, t.mix, Modifier.size(56.dp).clip(RoundedCornerShape(14.dp)), 120)
                         Text(
                             t.title, style = MaterialTheme.typography.labelLarge, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(horizontal = 8.dp),
@@ -328,13 +328,13 @@ fun SearchScreen() {
             Column(Modifier.statusBarsPadding()) {
                 Text("Search", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(vertical = 12.dp))
                 Row(
-                    Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(6.dp)).background(Color.White).padding(horizontal = 12.dp),
+                    Modifier.fillMaxWidth().height(48.dp).glass(RoundedCornerShape(24.dp)).padding(horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.Rounded.Search, null, tint = Color.Black)
+                    Icon(Icons.Rounded.Search, null, tint = Sub)
                     Spacer(Modifier.width(10.dp))
                     Box(Modifier.weight(1f)) {
-                        if (q.isEmpty()) Text("What do you want to listen to?", color = Color(0xFF6A6A6A), style = MaterialTheme.typography.bodyLarge)
+                        if (q.isEmpty()) Text("What do you want to listen to?", color = Faint, style = MaterialTheme.typography.bodyLarge)
                         BasicTextField(
                             field,
                             { field = if (selectOnFocus && it.text == field.text) selectAll(it) else it; selectOnFocus = false },
@@ -419,7 +419,7 @@ private fun GenreCard(g: xyz.yuuki.navidroid.Genre) {
     val nav = LocalNav.current
     val art by androidx.compose.runtime.produceState<String?>(null, g.name) { value = runCatching { api.genreCover(g.name) }.getOrNull() }
     val bg = rememberGenreTint(g.name, art)
-    Box(Modifier.height(100.dp).clip(RoundedCornerShape(8.dp)).background(bg).clickable { nav.go(Route.Open(Kind.Genre, g.name)) }) {
+    Box(Modifier.height(100.dp).clip(RoundedCornerShape(16.dp)).background(bg).clickable { nav.go(Route.Open(Kind.Genre, g.name)) }) {
         // The cover again, blurred behind a wash that is solid under the title and thins out towards the art.
         if (art != null) Cover(art, 300, Modifier.fillMaxSize().scale(1.3f).blur(10.dp), RoundedCornerShape(0.dp))
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(bg.copy(alpha = 0.92f), bg.copy(alpha = 0.6f), Color.Transparent))))
@@ -701,7 +701,7 @@ fun CollectionScreen(kind: Kind, id: String) {
                 val size = if (!wide) 240.dp else if (isTablet()) 200.dp else 128.dp
                 // Side by side only when the title gets real room beside the header, which is 1.4 covers wide: 420 dp for a phone's cover.
                 val row = wide && maxWidth >= size * 1.4f + 240.dp
-                val coverMod = Modifier.size(size).shadow(20.dp, RoundedCornerShape(6.dp)).clip(RoundedCornerShape(6.dp))
+                val coverMod = Modifier.size(size).shadow(20.dp, RoundedCornerShape(16.dp)).clip(RoundedCornerShape(16.dp))
                 val covers = remember(c) { albumCovers(c?.songs.orEmpty()) }
                 val cover = @Composable {
                     when {

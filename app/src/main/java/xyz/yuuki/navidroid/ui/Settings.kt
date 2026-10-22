@@ -283,7 +283,7 @@ private fun Section(title: String, modifier: Modifier, action: @Composable () ->
         Text(title.uppercase(), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.W700, letterSpacing = 1.sp, color = Sub, modifier = Modifier.weight(1f))
         action()
     }
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = .06f)).padding(vertical = 4.dp), content = content)
+    Column(Modifier.fillMaxWidth().glass(RoundedCornerShape(22.dp)).padding(vertical = 4.dp), content = content)
 }
 
 @Composable
@@ -912,7 +912,7 @@ fun HiddenPlaylistsScreen() {
 /** The figures on top of a cache page. */
 @Composable
 private fun CacheSummary(title: String, about: String) =
-    Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = .06f)).padding(16.dp)) {
+    Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().glass(RoundedCornerShape(22.dp)).padding(16.dp)) {
         Text(title, style = MaterialTheme.typography.titleLarge)
         Text(about, style = MaterialTheme.typography.bodySmall)
     }
