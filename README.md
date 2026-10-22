@@ -45,9 +45,12 @@ online or off.
 
 Needs **JDK 17+** and the Android SDK (compileSdk 37). Runs on Android 9 (API 28) and newer.
 
+The `github` build is the one to install, as `xyz.yuuki.navidroid`. The `xiaomi` build installs as
+`com.netease.cloudmusic`, a music app's package, because Xiaomi's rear screen only works with those.
+
 ```sh
-./gradlew assembleRelease      # app/build/outputs/apk/release/app-release.apk
-./gradlew testDebugUnitTest
+./gradlew assembleGithubRelease   # app/build/outputs/apk/github/release/app-github-release.apk
+./gradlew testGithubDebugUnitTest
 ```
 
 ## Project Structure

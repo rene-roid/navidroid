@@ -9,6 +9,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.LaunchedEffect
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -99,6 +100,8 @@ import xyz.yuuki.navidroid.ui.NowPlaying
 import xyz.yuuki.navidroid.ui.PlayerState
 import xyz.yuuki.navidroid.ui.Route
 import xyz.yuuki.navidroid.ui.SearchScreen
+import xyz.yuuki.navidroid.ui.Selection
+import xyz.yuuki.navidroid.ui.SelectionBar
 import xyz.yuuki.navidroid.ui.SettingsScreen
 import xyz.yuuki.navidroid.ui.Sub
 import xyz.yuuki.navidroid.ui.isTablet
@@ -251,6 +254,10 @@ private fun Shell(onLogout: () -> Unit) {
                         player?.let { MiniPlayer(it) { nowPlaying = true } }
                         Row(Modifier.fillMaxWidth().navigationBarsPadding().height(60.dp)) { Tabs(nav, Modifier.weight(1f)) }
                     }
+                    // Over the mini player and tabs while picking, and gone when the page changes.
+                    SelectionBar(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 8.dp))
+                    LaunchedEffect(page) { Selection.clear() }
+                    BackHandler(Selection.active) { Selection.clear() }
                 }
                 if (bar && player != null) PlayerBar(player, { nowPlaying = true }, Modifier.navigationBarsPadding().padding(end = 12.dp, bottom = 10.dp).fillMaxWidth())
                 }

@@ -14,12 +14,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
@@ -169,6 +172,11 @@ fun isLrcTag(line: String) = line.trim().matches(Regex("""\[[a-zA-Z#]+:[^\]]*]""
 
 class ApiException(message: String) : Exception(message)
 
+/** Makes [Api.call] answer only from what is saved on disk, to show a screen before the server answers. */
+class CacheOnly : AbstractCoroutineContextElement(CacheOnly) {
+    companion object Key : CoroutineContext.Key<CacheOnly>
+}
+
 fun JSONObject.s(k: String): String? = if (isNull(k)) null else optString(k)
 fun JSONArray?.objects(): List<JSONObject> = if (this == null) emptyList() else List(length()) { getJSONObject(it) }
 fun JSONObject.list(k: String): List<JSONObject> = optJSONArray(k).objects()
@@ -196,11 +204,16 @@ class Prefs(ctx: Context) {
     var auroraColors by int("auroraColors", 0)
     var accent by int("accent", 0xFF0085FF.toInt())
     var lastSync by long("lastSync")
+    var autoplay by bool("autoplay", false)
 
     /** Playlist ids saved to the library; Subsonic can't star playlists, so they live here. */
     var savedPlaylists: Set<String>
         get() = p.getStringSet("savedPlaylists", null) ?: emptySet()
         set(v) = p.edit().putStringSet("savedPlaylists", v).apply()
+
+    var hiddenPlaylists: Set<String>
+        get() = p.getStringSet("hiddenPlaylists", null) ?: emptySet()
+        set(v) = p.edit().putStringSet("hiddenPlaylists", v).apply()
 
     /** Pinned collections, "Kind:id", kept downloaded and re-synced. */
     var pins: List<String>
@@ -365,21 +378,50 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
 
     /** Calls [method] and returns the `subsonic-response` object; retries once on the next-best endpoint. */
     suspend fun call(method: String, vararg params: Pair<String, Any?>): JSONObject = withContext(Dispatchers.IO) {
+        // Reads are kept on disk, and answer instead when asked to ([CacheOnly]) or when the server can't be reached.
+        val copy = if (method.startsWith("get") || method == "search3") File(saved, md5(method + params.joinToString { "${it.first}=${it.second}" })) else null
+        val fresh = coroutineContext[CacheOnly] == null
+        val body = if (!fresh) copy?.takeIf { it.exists() }?.readText() ?: throw IOException("Not saved")
+        else try {
+            fetch(method, params.toList())
+        } catch (e: IOException) {
+            copy?.takeIf { it.exists() }?.readText() ?: throw e
+        }
+        val r = JSONObject(body).getJSONObject("subsonic-response")
+        if (r.optString("status") != "ok") throw ApiException(r.optJSONObject("error")?.optString("message") ?: "Server error")
+        if (fresh && copy != null) File.createTempFile("part", null, saved).apply { writeText(body) }.renameTo(copy)
+        r
+    }
+
+    private suspend fun fetch(method: String, params: List<Pair<String, Any?>>): String {
         // Every endpoint just failed: answer at once so screens fall back to downloads without waiting on timeouts.
         if (System.currentTimeMillis() - lastFailedRace < 15_000) throw IOException("Server unreachable")
         val tried = active
         val body = try {
-            get(url(method, params.toList()))
+            get(url(method, params))
         } catch (e: IOException) {
             val next = pickFastest()
             if (next == null || next == tried) throw e
-            get(url(method, params.toList()))
+            get(url(method, params))
         }
         online.value = true
-        val r = JSONObject(body).getJSONObject("subsonic-response")
-        if (r.optString("status") != "ok") throw ApiException(r.optJSONObject("error")?.optString("message") ?: "Server error")
-        r
+        return body
     }
+
+    /** Server answers kept on disk, so screens open at once and still open offline. */
+    private val saved = File(App.it.cacheDir, "meta").apply { mkdirs() }
+
+    init {
+        // ponytail: trims the least recently refreshed at startup to 64 MB; scans the whole folder, fine for thousands of files.
+        scope.launch(Dispatchers.IO) {
+            var total = 0L
+            saved.listFiles()?.sortedByDescending { it.lastModified() }?.forEach { total += it.length(); if (total > 64L shl 20) it.delete() }
+        }
+    }
+
+    fun savedBytes() = saved.listFiles()?.sumOf { it.length() } ?: 0L
+
+    fun clearSaved() = saved.listFiles()?.forEach { it.delete() }
 
     private fun get(url: String): String = http.newCall(Request.Builder().url(url).build()).execute().use {
         if (!it.isSuccessful) throw IOException("HTTP ${it.code}")
@@ -484,6 +526,19 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
 
     private suspend fun topAlbumCover(artistId: String) =
         call("getArtist", "id" to artistId).getJSONObject("artist").list("album").map(Album::from).maxByOrNull { it.playCount }?.coverArt
+
+    /**
+     * Up to 20 songs like [seeds] and not in [exclude], from the server's similar-artist data (Last.fm and the like);
+     * random songs when it has none.
+     */
+    suspend fun recommendations(seeds: List<String>, exclude: Set<String>): List<Song> = coroutineScope {
+        fun List<Song>.fresh() = filter { it.id !in exclude }.distinctBy { it.id }
+        val similar = seeds.map { id ->
+            async { runCatching { call("getSimilarSongs2", "id" to id, "count" to 10).optJSONObject("similarSongs2")?.list("song")?.map(Song::from) }.getOrNull().orEmpty() }
+        }.awaitAll().flatten().fresh()
+        similar.ifEmpty { call("getRandomSongs", "size" to 50).optJSONObject("randomSongs")?.list("song")?.map(Song::from).orEmpty().fresh() }
+            .shuffled().take(20)
+    }
 
     suspend fun search(q: String): SearchResult {
         val r = call("search3", "query" to q, "artistCount" to 6, "albumCount" to 12, "songCount" to 30)

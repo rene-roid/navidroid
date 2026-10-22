@@ -10,11 +10,22 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.netease.cloudmusic"
+        applicationId = "xyz.yuuki.navidroid"
         minSdk = 28
         targetSdk = 37
         versionCode = 2
         versionName = "1.1.0"
+    }
+
+    flavorDimensions += "target"
+    productFlavors {
+        // What GitHub releases ship.
+        create("github") { dimension = "target" }
+        // The Xiaomi 17 Pro's rear screen only plays along with a fixed list of music-app packages, so this build borrows one.
+        create("xiaomi") {
+            dimension = "target"
+            applicationId = "com.netease.cloudmusic"
+        }
     }
 
     buildTypes {

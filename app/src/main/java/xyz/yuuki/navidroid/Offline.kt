@@ -164,9 +164,9 @@ class Offline(private val app: App) {
 
     fun isPinned(kind: Kind, id: String) = pins.value.contains(Pin(kind, id))
 
-    fun pin(c: Collection) {
-        saveSnapshot(c)
-        setPins(pins.value + Pin(c.kind, c.id))
+    fun pin(vararg cs: Collection) {
+        cs.forEach(::saveSnapshot)
+        setPins(pins.value + cs.map { Pin(it.kind, it.id) })
         sync()
     }
 
@@ -267,7 +267,7 @@ class Offline(private val app: App) {
     fun coverFile(id: String) = File(covers, id.replace('/', '_'))
 
     private fun fetchCover(id: String) {
-        app.api.http.newCall(Request.Builder().url(app.api.coverUrl(id, 600)).build()).execute().use { r ->
+        app.imageHttp.newCall(Request.Builder().url(app.api.coverUrl(id, 600)).build()).execute().use { r ->
             if (!r.isSuccessful) return
             val tmp = File(covers, "$id.part")
             tmp.outputStream().use { r.body!!.byteStream().copyTo(it) }
@@ -275,8 +275,13 @@ class Offline(private val app: App) {
         }
     }
 
-    /** Bytes used by downloaded songs. */
-    fun bytesUsed() = cache.cacheSpace
+    /** Bytes used by downloaded songs and their covers. */
+    fun bytesUsed() = cache.cacheSpace + (covers.listFiles()?.sumOf { it.length() } ?: 0L)
+
+    /** Bytes used by songs kept from streaming and preloading. */
+    fun streamBytes() = streamCache.cacheSpace
+
+    fun clearStreamCache() = streamCache.keys.toList().forEach(streamCache::removeResource)
 
     companion object {
         const val CHANNEL = "downloads"

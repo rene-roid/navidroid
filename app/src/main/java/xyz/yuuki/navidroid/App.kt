@@ -1,6 +1,9 @@
 package xyz.yuuki.navidroid
 
 import android.app.Application
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.os.Build
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -14,6 +17,10 @@ import coil3.request.crossfade
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
+import java.io.ByteArrayOutputStream
 
 class App : Application(), SingletonImageLoader.Factory {
     companion object {
@@ -61,9 +68,28 @@ class App : Application(), SingletonImageLoader.Factory {
 
     val streamBitrate get() = if (metered) prefs.streamBitrateMobile else prefs.streamBitrateWifi
 
+    /** For covers: the API's client, but each cover is re-encoded as WebP before it is cached, about a third smaller than the server's JPEG. */
+    val imageHttp by lazy { api.http.newBuilder().addInterceptor { webp(it.proceed(it.request())) }.build() }
+
     override fun newImageLoader(context: PlatformContext) = ImageLoader.Builder(context)
         .crossfade(150)
+        // The disk cache is read before the network, so covers seen once also show offline.
         .diskCache { DiskCache.Builder().directory(cacheDir.resolve("images")).maxSizeBytes(512L * 1024 * 1024).build() }
-        .components { add(OkHttpNetworkFetcherFactory(callFactory = { api.http })) }
+        .components { add(OkHttpNetworkFetcherFactory(callFactory = { imageHttp })) }
         .build()
+}
+
+@Suppress("DEPRECATION")
+private fun webp(r: Response): Response {
+    if (!r.isSuccessful) return r
+    val bytes = r.body!!.bytes()
+    val keep = r.newBuilder().body(bytes.toResponseBody(r.body!!.contentType())).build()
+    val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return keep
+    val out = ByteArrayOutputStream()
+    // Before Android 11 plain WEBP is lossy below quality 100.
+    bmp.compress(if (Build.VERSION.SDK_INT >= 30) Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.WEBP, 80, out)
+    bmp.recycle()
+    if (out.size() >= bytes.size) return keep
+    return r.newBuilder().removeHeader("Content-Length").header("Content-Type", "image/webp")
+        .body(out.toByteArray().toResponseBody("image/webp".toMediaType())).build()
 }

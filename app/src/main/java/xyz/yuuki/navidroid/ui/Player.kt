@@ -370,6 +370,8 @@ fun DockedPlayer(p: PlayerState, modifier: Modifier = Modifier) {
     val pos = rememberPosition(p, 200)
     var showQueue by rememberSaveable { mutableStateOf(false) }
     val tablet = isTablet()
+    // A phone in landscape is too short for the full player and a panel, so a panel opens over a compact player.
+    var open by rememberSaveable { mutableStateOf(false) }
     val bigCover = tablet && !showQueue && lyrics.data == null && !lyrics.loading
 
     val head = @Composable {
@@ -408,8 +410,16 @@ fun DockedPlayer(p: PlayerState, modifier: Modifier = Modifier) {
                     .clickable(onClick = onClick).padding(vertical = if (tablet) 8.dp else 6.dp),
                 contentAlignment = Alignment.Center,
             ) { Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.W700, color = if (on) Color.White else Sub) }
-            seg("Lyrics", !showQueue) { showQueue = false }
-            seg("Up next", showQueue) { showQueue = true }
+            @Composable
+            fun pick(label: String, queue: Boolean) {
+                val on = showQueue == queue && (tablet || open)
+                seg(label, on) {
+                    showQueue = queue
+                    open = !on
+                }
+            }
+            pick("Lyrics", false)
+            pick("Up next", true)
         }
     }
     // Rows fade out at the top and bottom edges instead of being cut off.
@@ -444,12 +454,26 @@ fun DockedPlayer(p: PlayerState, modifier: Modifier = Modifier) {
             Seek(p, song, pos, inset = 12.dp)
             Controls(p, play = 60.dp, inset = 8.dp, vertical = 0.dp)
             Spacer(Modifier.height(8.dp))
-        } else {
-            head()
-            Seek(p, song, pos, inset = 16.dp, inline = true)
-            Controls(p, play = 52.dp, inset = 8.dp, vertical = 0.dp)
+        } else if (open) {
             tabs()
+            Row(Modifier.padding(start = 14.dp, top = 10.dp, end = 6.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Cover(song.coverArt, 120, Modifier.size(48.dp).swipeToSkip(p, song), RoundedCornerShape(8.dp))
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text(song.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, modifier = Modifier.basicMarquee())
+                    Text(song.artist, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = .7f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                PlayPause(p, 40.dp)
+                SkipButton(p, next = true, 30.dp)
+            }
+            Progress(p, song, pos, Modifier.padding(horizontal = 14.dp))
             panel(Modifier.weight(1f))
+        } else {
+            tabs()
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+                head()
+                Seek(p, song, pos, inset = 16.dp, inline = true)
+                Controls(p, play = 52.dp, inset = 8.dp, vertical = 0.dp)
+            }
         }
     }
 }

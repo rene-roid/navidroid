@@ -27,6 +27,7 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.TeeAudioProcessor
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.ShuffleOrder.DefaultShuffleOrder
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.session.CacheBitmapLoader
 import androidx.media3.session.MediaSession
@@ -107,6 +108,7 @@ class PlaybackService : MediaSessionService() {
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
         player.addListener(Scrobbler(player, scope))
+        player.addListener(Autoplay(player, scope))
         player.addListener(object : Player.Listener {
             private var retries = 0
 
@@ -243,6 +245,39 @@ private class CoverLoader(private val app: App) : BitmapLoader {
             if (bmp != null) f.set(bmp) else f.setException(IOException("No cover for $uri"))
         }
         return f
+    }
+}
+
+/**
+ * With autoplay on, tops up the queue when its last song starts, with songs like the last few heard.
+ * Offline, only downloaded ones.
+ */
+private class Autoplay(private val player: ExoPlayer, private val scope: CoroutineScope) : Player.Listener {
+    private var asked: String? = null
+
+    override fun onEvents(p: Player, events: Player.Events) {
+        if (!events.containsAny(Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_TIMELINE_CHANGED, Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED, Player.EVENT_REPEAT_MODE_CHANGED)) return
+        val app = App.it
+        val id = player.currentMediaItem?.mediaId ?: return
+        if (!app.prefs.autoplay || player.nextMediaItemIndex != C.INDEX_UNSET || id == asked) return
+        asked = id
+        val t = player.currentTimeline
+        val shuffle = player.shuffleModeEnabled
+        fun step(i: Int, next: Boolean) =
+            (if (next) t.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, shuffle) else t.getPreviousWindowIndex(i, Player.REPEAT_MODE_OFF, shuffle)).takeIf { it != C.INDEX_UNSET }
+        val seeds = generateSequence(player.currentMediaItemIndex) { step(it, false) }.take(5).map { player.getMediaItemAt(it).mediaId }.toList()
+        val order = generateSequence(t.getFirstWindowIndex(shuffle)) { step(it, true) }.toList()
+        val n = player.mediaItemCount
+        val queue = (0 until n).map { player.getMediaItemAt(it).mediaId }.toSet()
+        scope.launch {
+            val songs = runCatching { app.api.recommendations(seeds, queue) }.getOrNull().orEmpty()
+                .filter { app.api.online.value || app.offline.isDownloaded(it.id) }
+            // The queue changed while asking; its own last song will ask again.
+            if (songs.isEmpty() || player.currentMediaItem?.mediaId != id || player.mediaItemCount != n) return@launch
+            player.addMediaItems(songs.map { it.toMediaItem() })
+            // Added songs would otherwise be shuffled in among the ones already played.
+            if (shuffle) player.setShuffleOrder(DefaultShuffleOrder((order + (n until n + songs.size)).toIntArray(), System.nanoTime()))
+        }
     }
 }
 

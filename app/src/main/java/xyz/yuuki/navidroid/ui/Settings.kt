@@ -3,6 +3,11 @@ package xyz.yuuki.navidroid.ui
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
+import android.app.usage.NetworkStats
+import android.app.usage.NetworkStatsManager
+import android.net.ConnectivityManager
+import android.os.Process
+import java.util.Calendar
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -41,11 +46,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -160,7 +171,7 @@ fun LoginScreen(onDone: () -> Unit) {
             prefs.token = ok.second.first
             prefs.salt = ok.second.second
             prefs.active = ok.first
-            App.it.api = Api(prefs, App.it.scope)
+            App.it.api = Api(prefs, App.it.scope).apply { clearSaved() }
             App.it.scope.launch { App.it.api.pickFastest() }
             onDone()
         }
@@ -241,8 +252,15 @@ private val Red = Color(0xFFF15E6C)
 @Composable
 private fun StateText(text: String) = Text(text, color = LocalContentColor.current)
 
+/** A header and a card holding one group of settings; [action] sits at the header's end. */
 @Composable
-private fun Group(title: String) = Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 16.dp, top = 28.dp, bottom = 8.dp))
+private fun Section(title: String, modifier: Modifier, action: @Composable () -> Unit = {}, content: @Composable ColumnScope.() -> Unit) = Column(modifier.padding(horizontal = 16.dp)) {
+    Row(Modifier.padding(start = 4.dp, top = 20.dp, bottom = 6.dp).heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(title.uppercase(), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.W700, letterSpacing = 1.sp, color = Sub, modifier = Modifier.weight(1f))
+        action()
+    }
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = .06f)).padding(vertical = 4.dp), content = content)
+}
 
 @Composable
 private fun SettingRow(title: String, subtitle: String? = null, onClick: (() -> Unit)? = null, trailing: @Composable () -> Unit = {}) = Row(
@@ -254,6 +272,33 @@ private fun SettingRow(title: String, subtitle: String? = null, onClick: (() -> 
         subtitle?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
     }
     trailing()
+}
+
+private val storageColors = listOf(Color(0xFF509BF5), Color(0xFF8D67AB), Color(0xFF27856A), Color(0xFFF59B23))
+
+/** Bytes this app moved since the 1st, on Wi-Fi and on mobile data; null where Android won't say (mobile before Android 10). */
+@Suppress("DEPRECATION")
+private fun monthTraffic(ctx: Context): Pair<Long?, Long?> {
+    val stats = ctx.getSystemService(NetworkStatsManager::class.java)
+    val start = Calendar.getInstance().apply {
+        set(Calendar.DAY_OF_MONTH, 1)
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+    fun sum(type: Int) = runCatching {
+        stats.queryDetailsForUid(type, null, start, System.currentTimeMillis(), Process.myUid()).use { s ->
+            val b = NetworkStats.Bucket()
+            var total = 0L
+            while (s.hasNextBucket()) {
+                s.getNextBucket(b)
+                total += b.rxBytes + b.txBytes
+            }
+            total
+        }
+    }.getOrNull()
+    return sum(ConnectivityManager.TYPE_WIFI) to sum(ConnectivityManager.TYPE_MOBILE)
 }
 
 private val qualities = listOf(0 to "Original", 320 to "320 kbps", 256 to "256 kbps", 192 to "192 kbps", 160 to "160 kbps", 128 to "128 kbps", 96 to "96 kbps")
@@ -346,8 +391,16 @@ fun SettingsScreen(onLogout: () -> Unit) {
     var mobile by remember { mutableIntStateOf(prefs.streamBitrateMobile) }
     var dl by remember { mutableIntStateOf(prefs.downloadBitrate) }
     var wifiOnly by remember { mutableStateOf(prefs.wifiOnlyDownloads) }
+    var autoplay by remember { mutableStateOf(prefs.autoplay) }
+    val playlists = rememberLoad("playlists") { app.api.playlists() }
     var pickingAccent by remember { mutableStateOf(false) }
     var icon by remember { mutableIntStateOf(currentIcon(ctx)) }
+    var cleared by remember { mutableIntStateOf(0) }
+    // Downloads, streamed songs, covers, saved info.
+    val storage by produceState(listOf(0L, 0L, 0L, 0L), cleared) {
+        value = withContext(Dispatchers.IO) { listOf(app.offline.bytesUsed(), app.offline.streamBytes(), ctx.imageLoader.diskCache?.size ?: 0L, app.api.savedBytes()) }
+    }
+    val traffic by produceState<Pair<Long?, Long?>>(null to null) { value = withContext(Dispatchers.IO) { monthTraffic(ctx) } }
 
     fun recheck() {
         checking = true
@@ -368,91 +421,161 @@ fun SettingsScreen(onLogout: () -> Unit) {
         }
     }
 
-    LazyColumn(Modifier.fillMaxSize()) {
-        item { BackTitle("Settings") }
+    val switchColors = SwitchDefaults.colors(checkedTrackColor = Accent)
+    val wide = Modifier.widthIn(max = 640.dp).fillMaxWidth()
+    LazyColumn(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+        item { Box(wide) { BackTitle("Settings") } }
         item {
-            Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Avatar(48.dp) { pickAvatar.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
-                Box(Modifier.weight(1f)) {
-                    SettingRow(displayName(), "Logged in as ${prefs.username}") {
-                        OutlinedButton(onLogout) { Text("Log out", color = Color.White) }
+            Section("Account", wide) {
+                Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Avatar(48.dp) { pickAvatar.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+                    Box(Modifier.weight(1f)) {
+                        SettingRow(displayName(), "Logged in as ${prefs.username}") {
+                            OutlinedButton(onLogout) { Text("Log out", color = Color.White) }
+                        }
                     }
                 }
             }
         }
         item {
-            Row(Modifier.padding(end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.weight(1f)) { Group("Servers") }
-                if (checking) CircularProgressIndicator(Modifier.padding(top = 20.dp).size(20.dp), color = Accent, strokeWidth = 2.dp)
-                else IconButton(::recheck, Modifier.padding(top = 20.dp)) { Icon(Icons.Rounded.Refresh, "Test all") }
-            }
-        }
-        items(endpoints, key = { it }) { ep ->
-            val ms = latency[ep]
-            SettingRow(
-                ep,
-                when {
-                    ep !in latency -> "Testing…"
-                    ms == null -> "Unreachable"
-                    ep == active -> "In use • $ms ms"
-                    else -> "$ms ms"
-                },
-            ) {
-                if (ep == active) Icon(Icons.Rounded.Check, "In use", tint = Accent)
-                if (endpoints.size > 1) IconButton({
-                    endpoints = endpoints - ep
-                    prefs.endpoints = endpoints
-                    recheck()
-                }) { Icon(Icons.Rounded.Close, "Remove", tint = Sub) }
-            }
-        }
-        item {
-            Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    newEndpoint, { newEndpoint = it }, Modifier.weight(1f), singleLine = true, colors = fieldColors,
-                    placeholder = { Text("Add another address") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                )
-                IconButton({
-                    if (newEndpoint.isNotBlank()) {
-                        endpoints = (endpoints + normalizeEndpoint(newEndpoint)).distinct()
-                        prefs.endpoints = endpoints
-                        newEndpoint = ""
-                        recheck()
+            Section("Server", wide, action = {
+                if (checking) CircularProgressIndicator(Modifier.padding(12.dp).size(20.dp), color = Accent, strokeWidth = 2.dp)
+                else IconButton(::recheck) { Icon(Icons.Rounded.Refresh, "Test all") }
+            }) {
+                endpoints.forEach { ep ->
+                    val ms = latency[ep]
+                    SettingRow(
+                        ep,
+                        when {
+                            ep !in latency -> "Testing…"
+                            ms == null -> "Unreachable"
+                            ep == active -> "In use • $ms ms"
+                            else -> "$ms ms"
+                        },
+                    ) {
+                        if (ep == active) Icon(Icons.Rounded.Check, "In use", tint = Accent)
+                        if (endpoints.size > 1) IconButton({
+                            endpoints = endpoints - ep
+                            prefs.endpoints = endpoints
+                            recheck()
+                        }) { Icon(Icons.Rounded.Close, "Remove", tint = Sub) }
                     }
-                }) { Icon(Icons.Rounded.Add, "Add") }
+                }
+                Row(Modifier.padding(start = 16.dp, end = 4.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        newEndpoint, { newEndpoint = it }, Modifier.weight(1f), singleLine = true, colors = fieldColors,
+                        placeholder = { Text("Add another address") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    )
+                    IconButton({
+                        if (newEndpoint.isNotBlank()) {
+                            endpoints = (endpoints + normalizeEndpoint(newEndpoint)).distinct()
+                            prefs.endpoints = endpoints
+                            newEndpoint = ""
+                            recheck()
+                        }
+                    }) { Icon(Icons.Rounded.Add, "Add") }
+                }
             }
         }
-
-        item { Group("Streaming quality") }
-        item { ChoiceRow("On Wi-Fi", wifi) { wifi = it; prefs.streamBitrateWifi = it } }
-        item { ChoiceRow("On mobile data", mobile) { mobile = it; prefs.streamBitrateMobile = it } }
-
-        item { Group("Look") }
         item {
-            ChoiceRow("Button colour", accents.indexOf(Accent).takeIf { it >= 0 } ?: accents.size, accentChoices) {
-                if (it < accents.size) setAccent(accents[it]) else pickingAccent = true
+            Section("Playback", wide) {
+                ChoiceRow("Streaming quality on Wi-Fi", wifi) { wifi = it; prefs.streamBitrateWifi = it }
+                ChoiceRow("Streaming quality on mobile data", mobile) { mobile = it; prefs.streamBitrateMobile = it }
+                SettingRow("Autoplay", "When the queue ends, keep playing songs like the last ones", { autoplay = !autoplay; prefs.autoplay = autoplay }) {
+                    Switch(autoplay, { autoplay = it; prefs.autoplay = it }, colors = switchColors)
+                }
             }
         }
-        item { ChoiceRow("App icon", icon, iconChoices) { icon = it; setIcon(ctx, it) } }
-        item { AuroraSwitch(auroraOn) }
-        if (auroraOn.on) {
-            item { ChoiceRow("Aurora colours", auroraMode, auroraModes) { auroraMode = it; prefs.auroraColors = it } }
-            items(auroraDetails, key = { it.title }) { AuroraSwitch(it) }
-        }
-
-        item { Group("Downloads") }
-        item { ChoiceRow("Download quality", dl) { dl = it; prefs.downloadBitrate = it; app.offline.sync() } }
         item {
-            SettingRow("Download on Wi-Fi only", "Pinned playlists wait for Wi-Fi") {
-                Switch(wifiOnly, { wifiOnly = it; app.offline.setWifiOnly(it) }, colors = SwitchDefaults.colors(checkedTrackColor = Accent))
+            Section("Downloads", wide) {
+                ChoiceRow("Download quality", dl) { dl = it; prefs.downloadBitrate = it; app.offline.sync() }
+                SettingRow("Download on Wi-Fi only", "Pinned playlists wait for Wi-Fi", { wifiOnly = !wifiOnly; app.offline.setWifiOnly(wifiOnly) }) {
+                    Switch(wifiOnly, { wifiOnly = it; app.offline.setWifiOnly(it) }, colors = switchColors)
+                }
+                SettingRow("Manage downloads", "See what's kept on this phone", { nav.go(Route.Downloads) }) {
+                    Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = Sub)
+                }
             }
         }
-        item { SettingRow("Manage downloads", null, { nav.go(Route.Downloads) }) }
         item {
-            SettingRow("Clear image cache", "Covers download again as you browse", {
-                ctx.imageLoader.memoryCache?.clear()
-                ctx.imageLoader.diskCache?.clear()
-            })
+            Section("Appearance", wide) {
+                ChoiceRow("Button colour", accents.indexOf(Accent).takeIf { it >= 0 } ?: accents.size, accentChoices) {
+                    if (it < accents.size) setAccent(accents[it]) else pickingAccent = true
+                }
+                ChoiceRow("App icon", icon, iconChoices) { icon = it; setIcon(ctx, it) }
+            }
+        }
+        item {
+            Section("Background", wide) {
+                AuroraSwitch(auroraOn)
+                if (auroraOn.on) {
+                    ChoiceRow("Aurora colours", auroraMode, auroraModes) { auroraMode = it; prefs.auroraColors = it }
+                    auroraDetails.forEach { AuroraSwitch(it) }
+                }
+            }
+        }
+        val hidden = playlists.data.orEmpty().filter { it.id in Hidden.playlists }
+        if (hidden.isNotEmpty()) item {
+            Section("Hidden playlists", wide) {
+                hidden.forEach { p ->
+                    SettingRow(p.mix?.title ?: p.name, if (p.mix != null) "Mix" else "Playlist • ${p.owner}") {
+                        TextButton({ Hidden.set(listOf(p.id), false) }) { Text("Unhide", color = Accent) }
+                    }
+                }
+            }
+        }
+        item {
+            Section("Storage", wide) {
+                fun clear(action: () -> Unit) {
+                    scope.launch {
+                        withContext(Dispatchers.IO) { action() }
+                        cleared++
+                    }
+                }
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Text("${formatBytes(storage.sum())} on this phone", style = MaterialTheme.typography.titleMedium)
+                    Row(Modifier.padding(top = 10.dp).fillMaxWidth().height(10.dp).clip(CircleShape).background(Color.White.copy(alpha = .1f))) {
+                        storage.forEachIndexed { i, b -> if (b > 0) Box(Modifier.weight(b.toFloat()).fillMaxHeight().background(storageColors[i])) }
+                    }
+                }
+                @Composable
+                fun part(i: Int, title: String, about: String, trailing: @Composable () -> Unit) = Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.padding(start = 16.dp).size(10.dp).clip(CircleShape).background(storageColors[i]))
+                    Box(Modifier.weight(1f)) { SettingRow(title, "${formatBytes(storage[i])} • $about", trailing = trailing) }
+                }
+                part(0, "Downloads", "Pinned playlists and albums") {
+                    TextButton({ nav.go(Route.Downloads) }) { Text("Manage", color = Accent) }
+                }
+                part(1, "Song cache", "Songs heard or lined up next, up to 1 GB") {
+                    TextButton({ clear(app.offline::clearStreamCache) }) { Text("Clear", color = Accent) }
+                }
+                part(2, "Image cache", "Covers, fetched again as you browse") {
+                    TextButton({
+                        ctx.imageLoader.memoryCache?.clear()
+                        clear { ctx.imageLoader.diskCache?.clear() }
+                    }) { Text("Clear", color = Accent) }
+                }
+                part(3, "Saved info", "Albums, artists and playlists, to open fast and offline") {
+                    TextButton({ clear { app.api.clearSaved() } }) { Text("Clear", color = Accent) }
+                }
+            }
+        }
+        item {
+            Section("Data used this month", wide) {
+                val (wifiBytes, mobileBytes) = traffic
+                fun quality(br: Int) = qualities.firstOrNull { it.first == br }?.second ?: "$br kbps"
+                SettingRow("Wi-Fi", "Streaming at ${quality(wifi)}") { Text(wifiBytes?.let(::formatBytes) ?: "—") }
+                SettingRow("Mobile data", "Streaming at ${quality(mobile)}") { Text(mobileBytes?.let(::formatBytes) ?: "—") }
+                Text(
+                    "Counted by Android, so it can lag by an hour or two.", style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                )
+            }
+        }
+        item {
+            Section("About", wide) {
+                SettingRow("Navidroid", "Version ${remember { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }}")
+            }
         }
         item { BottomSpacer() }
     }

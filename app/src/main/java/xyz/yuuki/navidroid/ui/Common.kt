@@ -6,6 +6,18 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DownloadForOffline
+import androidx.compose.material.icons.rounded.VisibilityOff
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.draw.scale
@@ -100,6 +112,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import xyz.yuuki.navidroid.App
+import xyz.yuuki.navidroid.CacheOnly
 import xyz.yuuki.navidroid.Kind
 import xyz.yuuki.navidroid.Mix
 import xyz.yuuki.navidroid.Playlist
@@ -154,7 +167,7 @@ private val uiCache = HashMap<String, Any?>()
 
 class Load<T>(val data: T?, val error: String?, val loading: Boolean, val refresh: () -> Unit)
 
-/** Shows the last result for [key] instantly, then refreshes it. Makes back navigation free. */
+/** Shows the last result for [key] instantly, from memory or else from disk, then refreshes it. Makes back navigation free. */
 @Suppress("UNCHECKED_CAST")
 @Composable
 fun <T> rememberLoad(key: String, loader: suspend () -> T): Load<T> {
@@ -164,6 +177,13 @@ fun <T> rememberLoad(key: String, loader: suspend () -> T): Load<T> {
     var tick by remember(key) { mutableIntStateOf(0) }
     LaunchedEffect(key, tick) {
         loading = true
+        // Nothing in memory yet: open from the server's last answers on disk while the fresh ones load.
+        if (data == null) try {
+            data = withContext(CacheOnly()) { loader() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+        }
         try {
             val v = loader()
             uiCache[key] = v
@@ -221,6 +241,115 @@ fun HeartButton(liked: Boolean, size: Dp = 28.dp, onClick: () -> Unit) = IconBut
 fun LikedHeart(modifier: Modifier, description: String?) = Box(modifier) {
     Icon(Icons.Rounded.Favorite, description, Modifier.matchParentSize(), tint = Color.White)
     Icon(Icons.Rounded.Favorite, null, Modifier.matchParentSize().scale(.82f), tint = Accent)
+}
+
+/** Playlists hidden from home and the library, on this phone only; Settings lists them to bring back. */
+object Hidden {
+    var playlists by mutableStateOf(App.it.prefs.hiddenPlaylists)
+        private set
+
+    fun set(ids: Collection<String>, hidden: Boolean) {
+        playlists = if (hidden) playlists + ids else playlists - ids.toSet()
+        App.it.prefs.hiddenPlaylists = playlists
+    }
+
+    fun shows(t: Tile) = t.kind != Kind.Playlist || t.id !in playlists
+}
+
+// ---- selection ------------------------------------------------------------------------------
+
+/** Songs, or playlists, albums and artists, picked by pressing and holding; [SelectionBar] acts on them all. Never both at once. */
+object Selection {
+    val items = mutableStateListOf<Any>()
+    val active get() = items.isNotEmpty()
+
+    private fun key(x: Any) = if (x is Song) "song:${x.id}" else (x as Tile).run { "$kind:$id" }
+
+    fun has(x: Any) = items.any { key(it) == key(x) }
+
+    fun toggle(x: Any) {
+        if (items.firstOrNull()?.let { it::class != x::class } == true) items.clear()
+        if (!items.removeAll { key(it) == key(x) }) items += x
+    }
+
+    fun clear() = items.clear()
+}
+
+/** Tap does [onClick], or while picking adds or drops [item]; press and hold starts picking. */
+@Composable
+fun Modifier.pickable(item: Any, onClick: () -> Unit): Modifier {
+    val haptics = LocalHapticFeedback.current
+    return combinedClickable(
+        onClick = { if (Selection.active) Selection.toggle(item) else onClick() },
+        onLongClick = {
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            Selection.toggle(item)
+        },
+    ).then(if (Selection.has(item)) Modifier.background(Accent.copy(alpha = .25f)) else Modifier)
+}
+
+private suspend fun songsOf(t: Tile) = with(App.it.api) { if (t.kind == Kind.Artist) artistSongs(artist(t.id)) else collection(t.kind, t.id).songs }
+
+/** What can be done with everything picked; floats at the bottom of the page while picking. */
+@Composable
+fun SelectionBar(modifier: Modifier = Modifier) {
+    val player = LocalPlayer.current
+    val scope = rememberCoroutineScope()
+    var adding by remember { mutableStateOf<List<Song>?>(null) }
+    adding?.let { AddToPlaylist(it) { adding = null } }
+    val items = Selection.items.toList()
+    if (items.isEmpty()) return
+    val songs = items.filterIsInstance<Song>()
+    val tiles = items.filterIsInstance<Tile>()
+    // Playlists, albums and artists are fetched only once an action needs their songs.
+    fun withSongs(action: (List<Song>) -> Unit) {
+        Selection.clear()
+        scope.launch {
+            val all = songs + coroutineScope { tiles.map { t -> async { runCatching { songsOf(t) }.getOrDefault(emptyList()) } }.awaitAll().flatten() }
+            if (all.isNotEmpty()) action(all)
+        }
+    }
+    Column(modifier.padding(horizontal = 8.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Elevated).padding(bottom = 6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(Selection::clear) { Icon(Icons.Rounded.Close, "Cancel") }
+            Text("${items.size} selected", style = MaterialTheme.typography.titleMedium)
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+            @Composable
+            fun action(label: String, icon: ImageVector, onClick: () -> Unit) = Column(
+                Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Icon(icon, null)
+                val style = MaterialTheme.typography.labelSmall
+                // Shrinks rather than cut off with large fonts and six actions.
+                BasicText(label, Modifier.padding(top = 2.dp), style.copy(color = Color.White), maxLines = 1, autoSize = TextAutoSize.StepBased(8.sp, style.fontSize))
+            }
+            action("Play", Icons.Rounded.PlayArrow) { withSongs { player?.play(it, from = tiles.singleOrNull()?.title) } }
+            action("Next", Icons.AutoMirrored.Rounded.PlaylistPlay) { withSongs { player?.playNext(it) } }
+            action("Queue", Icons.AutoMirrored.Rounded.QueueMusic) { withSongs { player?.enqueue(it) } }
+            action("Playlist", Icons.AutoMirrored.Rounded.PlaylistAdd) { withSongs { adding = it } }
+            if (tiles.isEmpty()) {
+                val all = songs.all(Likes::isLiked)
+                action(if (all) "Unlike" else "Like", if (all) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder) {
+                    songs.filter { Likes.isLiked(it) == all }.forEach(Likes::toggle)
+                    Selection.clear()
+                }
+            }
+            val keepable = tiles.filter { it.kind != Kind.Artist }
+            if (keepable.isNotEmpty()) action("Download", Icons.Rounded.DownloadForOffline) {
+                Selection.clear()
+                scope.launch {
+                    val cs = keepable.mapNotNull { t -> runCatching { App.it.api.collection(t.kind, t.id) }.getOrNull() }
+                    App.it.offline.pin(*cs.toTypedArray())
+                }
+            }
+            if (tiles.isNotEmpty() && tiles.all { it.kind == Kind.Playlist }) action("Hide", Icons.Rounded.VisibilityOff) {
+                Hidden.set(tiles.map { it.id }, true)
+                Selection.clear()
+            }
+        }
+    }
 }
 
 // ---- images ---------------------------------------------------------------------------------
@@ -367,7 +496,7 @@ fun BottomSpacer() = Spacer(Modifier.navigationBarsPadding().height(200.dp))
 @Composable
 fun Card(t: Tile, width: Dp = 150.dp, modifier: Modifier = Modifier) {
     val nav = LocalNav.current
-    Column(modifier.width(width).clip(RoundedCornerShape(6.dp)).clickable { nav.open(t) }.padding(6.dp)) {
+    Column(modifier.width(width).clip(RoundedCornerShape(6.dp)).pickable(t) { nav.open(t) }.padding(6.dp)) {
         TileCover(t.kind, t.id, t.coverArt, t.mix, Modifier.fillMaxWidth())
         Spacer(Modifier.height(8.dp))
         Text(t.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -404,7 +533,7 @@ fun TrackRow(song: Song, onClick: () -> Unit, number: Int? = null, showArt: Bool
     val current = player?.song?.id == song.id
     val states by App.it.offline.states.collectAsStateWithLifecycle()
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = inset, top = 6.dp, bottom = 6.dp),
+        Modifier.fillMaxWidth().pickable(song, onClick).padding(start = inset, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (number != null) Text("$number", Modifier.width(28.dp), color = if (current) Accent else Sub, style = MaterialTheme.typography.bodyMedium)
@@ -512,7 +641,7 @@ fun AddToPlaylist(songs: List<Song>, onDone: () -> Unit) {
                         Text("New playlist")
                     }
                 }
-                items(lists.data.orEmpty().filter { it.mix == null && it.owner == user }, key = Playlist::id) { p ->
+                items(lists.data.orEmpty().filter { it.mix == null && it.owner == user && it.id !in Hidden.playlists }, key = Playlist::id) { p ->
                     Row(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).clickable {
                             scope.launch {

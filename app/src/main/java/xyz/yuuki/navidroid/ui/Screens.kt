@@ -141,6 +141,7 @@ import xyz.yuuki.navidroid.Kind
 import xyz.yuuki.navidroid.Pin
 import xyz.yuuki.navidroid.Tile
 import xyz.yuuki.navidroid.buildHome
+import xyz.yuuki.navidroid.likedTile
 import xyz.yuuki.navidroid.list
 import xyz.yuuki.navidroid.tile
 import java.io.File
@@ -212,8 +213,8 @@ fun HomeScreen() {
             }
             if (!online || (home.data == null && home.error != null)) item("offline") { OfflineHome(pinnedTiles(pins)) }
             home.data?.let { h ->
-                item("quick") { QuickGrid(h.quick) }
-                items(h.sections, key = { it.key }) { s ->
+                item("quick") { QuickGrid(h.quick.filter(Hidden::shows)) }
+                items(h.sections.map { it.copy(tiles = it.tiles.filter(Hidden::shows)) }.filter { it.tiles.isNotEmpty() }, key = { it.key }) { s ->
                     SectionHeader(s.title) { nav.go(Route.More(s.key)) }
                     LazyRow(contentPadding = PaddingValues(horizontal = 10.dp)) {
                         items(s.tiles, key = { "${it.kind}:${it.id}" }) { Card(it) }
@@ -249,7 +250,7 @@ private fun QuickGrid(tiles: List<Tile>, modifier: Modifier = Modifier.padding(h
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 row.forEach { t ->
                     Row(
-                        Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(4.dp)).background(Tile).clickable { nav.open(t) },
+                        Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(4.dp)).background(Tile).pickable(t) { nav.open(t) },
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         TileCover(t.kind, t.id, t.coverArt, t.mix, Modifier.size(56.dp), 120)
@@ -276,7 +277,7 @@ fun MoreScreen(key: String) {
     val section = cachedUi<Home>("home")?.sections?.firstOrNull { it.key == key }
     LazyVerticalGrid(GridCells.Adaptive(160.dp), Modifier.fillMaxSize(), contentPadding = PaddingValues(10.dp)) {
         item(span = { GridItemSpan(maxLineSpan) }) { BackTitle(section?.title ?: "") }
-        items(section?.tiles.orEmpty(), key = { "${it.kind}:${it.id}" }) { Card(it, width = 200.dp) }
+        items(section?.tiles.orEmpty().filter(Hidden::shows), key = { "${it.kind}:${it.id}" }) { Card(it, width = 200.dp) }
         item(span = { GridItemSpan(maxLineSpan) }) { BottomSpacer() }
     }
 }
@@ -362,8 +363,8 @@ fun SearchScreen() {
             items(hits, key = { hitKey(it) }, span = { GridItemSpan(maxLineSpan) }) { h ->
                 when (h) {
                     is xyz.yuuki.navidroid.Genre -> ListRow(h.name, "Genre", { GenreThumb(h.name) }) { nav.go(Route.Open(Kind.Genre, h.name)) }
-                    is xyz.yuuki.navidroid.Artist -> ListRow(h.name, "Artist", { Cover(h.coverArt, 120, Modifier.size(48.dp), CircleShape) }) { nav.go(Route.Open(Kind.Artist, h.id)) }
-                    is xyz.yuuki.navidroid.Album -> ListRow(h.name, "Album • ${h.artist}", { Cover(h.coverArt, 120, Modifier.size(48.dp)) }) { nav.go(Route.Open(Kind.Album, h.id)) }
+                    is xyz.yuuki.navidroid.Artist -> ListRow(h.name, "Artist", { Cover(h.coverArt, 120, Modifier.size(48.dp), CircleShape) }, pick = h.tile()) { nav.go(Route.Open(Kind.Artist, h.id)) }
+                    is xyz.yuuki.navidroid.Album -> ListRow(h.name, "Album • ${h.artist}", { Cover(h.coverArt, 120, Modifier.size(48.dp)) }, pick = h.tile()) { nav.go(Route.Open(Kind.Album, h.id)) }
                     is xyz.yuuki.navidroid.Song -> TrackRow(h, { player?.play(listOf(h), from = "Search") }, inset = 0.dp)
                 }
             }
@@ -434,8 +435,8 @@ private fun GenreCard(g: xyz.yuuki.navidroid.Genre) {
 }
 
 @Composable
-fun ListRow(title: String, subtitle: String, cover: @Composable () -> Unit, trailing: @Composable () -> Unit = {}, onClick: () -> Unit) = Row(
-    Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).clickable(onClick = onClick).padding(vertical = 6.dp),
+fun ListRow(title: String, subtitle: String, cover: @Composable () -> Unit, trailing: @Composable () -> Unit = {}, pick: Any? = null, onClick: () -> Unit) = Row(
+    Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).then(if (pick != null) Modifier.pickable(pick, onClick) else Modifier.clickable(onClick = onClick)).padding(vertical = 6.dp),
     verticalAlignment = Alignment.CenterVertically,
 ) {
     cover()
@@ -587,7 +588,7 @@ fun LibraryScreen(column: Boolean = false) {
             @Composable
             fun playlistRow(p: xyz.yuuki.navidroid.Playlist) {
                 val t = p.tile()
-                ListRow(t.title, if (p.mix != null) "Mix • ${p.mix.by}" else "Playlist • ${p.owner}", { TileCover(Kind.Playlist, p.id, p.coverArt, p.mix, Modifier.size(56.dp), 120) }, { mark(Kind.Playlist, p.id, p.id in Likes.playlists) }) {
+                ListRow(t.title, if (p.mix != null) "Mix • ${p.mix.by}" else "Playlist • ${p.owner}", { TileCover(Kind.Playlist, p.id, p.coverArt, p.mix, Modifier.size(56.dp), 120) }, { mark(Kind.Playlist, p.id, p.id in Likes.playlists) }, t) {
                     nav.open(t)
                 }
             }
@@ -604,12 +605,12 @@ fun LibraryScreen(column: Boolean = false) {
                 Text("Nothing saved here yet. Tap the heart on a playlist, album or artist.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 24.dp))
             }
             val (mixes, ownPlaylists) = playlists.data.orEmpty()
-                .filter { (!onlySaved || it.id in Likes.playlists) && hit(it.tile().title, it.owner) }
+                .filter { it.id !in Hidden.playlists && (!onlySaved || it.id in Likes.playlists) && hit(it.tile().title, it.owner) }
                 .sortedBy { it.id !in Likes.playlists }.partition { it.mix != null }
             when (tab) {
                 "Playlists" -> {
                     if (hit("Liked Songs")) item("liked") {
-                        ListRow("Liked Songs", "Playlist", { LikedCover(Modifier.size(56.dp)) }, { mark(Kind.Liked, "liked") }) { nav.go(Route.Open(Kind.Liked, "liked")) }
+                        ListRow("Liked Songs", "Playlist", { LikedCover(Modifier.size(56.dp)) }, { mark(Kind.Liked, "liked") }, likedTile(null)) { nav.go(Route.Open(Kind.Liked, "liked")) }
                     }
                     if (!onlySaved && query.isBlank()) item("new") {
                         ListRow("Create playlist", "Then add songs from any song's menu", { Box(Modifier.size(56.dp).background(Tile, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, null) } }) { creating = true }
@@ -631,13 +632,13 @@ fun LibraryScreen(column: Boolean = false) {
                 "Albums" -> {
                     if (onlySaved && savedAlbums.isEmpty()) emptySaved()
                     items((if (onlySaved) savedAlbums else savedAlbums + albums.filter { it.id !in savedAlbumIds }).filter { hit(it.name, it.artist) }, key = { it.id }) { a ->
-                        ListRow(a.name, "Album • ${a.artist}", { Cover(a.coverArt, 120, Modifier.size(56.dp)) }, { mark(Kind.Album, a.id, a.id in savedAlbumIds) }) { nav.go(Route.Open(Kind.Album, a.id)) }
+                        ListRow(a.name, "Album • ${a.artist}", { Cover(a.coverArt, 120, Modifier.size(56.dp)) }, { mark(Kind.Album, a.id, a.id in savedAlbumIds) }, a.tile()) { nav.go(Route.Open(Kind.Album, a.id)) }
                     }
                 }
                 "Artists" -> {
                     if (onlySaved && savedArtists.isEmpty()) emptySaved()
                     items((if (onlySaved) savedArtists else savedArtists + artists.data.orEmpty().filter { it.id !in savedArtistIds }).filter { hit(it.name) }, key = { it.id }) { a ->
-                        ListRow(a.name, "Artist", { Cover(a.coverArt, 120, Modifier.size(56.dp), CircleShape) }, { mark(Kind.Artist, a.id, a.id in savedArtistIds) }) { nav.go(Route.Open(Kind.Artist, a.id)) }
+                        ListRow(a.name, "Artist", { Cover(a.coverArt, 120, Modifier.size(56.dp), CircleShape) }, { mark(Kind.Artist, a.id, a.id in savedArtistIds) }, a.tile()) { nav.go(Route.Open(Kind.Artist, a.id)) }
                     }
                 }
                 else -> {
@@ -647,7 +648,7 @@ fun LibraryScreen(column: Boolean = false) {
                         Text("Tap the download button on a playlist or album to keep it on this phone.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 24.dp))
                     }
                     items(tiles, key = { "${it.kind}:${it.id}" }) { t ->
-                        ListRow(t.title, t.subtitle, { TileCover(t.kind, t.id, t.coverArt, t.mix, Modifier.size(56.dp), 120) }, { mark(t.kind, t.id, t.kind != Kind.Liked && saved(t.kind, t.id)) }) { nav.open(t) }
+                        ListRow(t.title, t.subtitle, { TileCover(t.kind, t.id, t.coverArt, t.mix, Modifier.size(56.dp), 120) }, { mark(t.kind, t.id, t.kind != Kind.Liked && saved(t.kind, t.id)) }, t) { nav.open(t) }
                     }
                 }
             }
