@@ -42,6 +42,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -330,7 +331,8 @@ fun MixFlow(mix: Mix, coverArt: String?, covers: List<String>, modifier: Modifie
     Box(Modifier.fillMaxSize().then(swipe))
     // Each cover's place relative to the front one, wrapping round so the flow never runs out; drawn back to front.
     val places = List(n) { i -> i to ((i - pos.value) % n + n) % n }.map { (i, d) -> i to if (d > n / 2f) d - n else d }
-    places.filter { abs(it.second) < 2.6f }.sortedByDescending { abs(it.second) }.forEach { (i, d) ->
+    // Keyed, or reordering hands each card another's slot and the mix tile's art reloads mid-flow.
+    places.filter { abs(it.second) < 2.6f }.sortedByDescending { abs(it.second) }.forEach { (i, d) -> key(i) {
         val near = d.coerceIn(-1f, 1f)
         val far = abs(d) - abs(near)
         Column(
@@ -357,7 +359,7 @@ fun MixFlow(mix: Mix, coverArt: String?, covers: List<String>, modifier: Modifie
                 card(Modifier.wrapContentHeight(Alignment.Top, unbounded = true).size(side).graphicsLayer { scaleY = -1f })
             }
         }
-    }
+    } }
 }
 
 // ---- artist: their releases rolling past ---------------------------------------------------------
