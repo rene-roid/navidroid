@@ -113,6 +113,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import xyz.yuuki.navidroid.App
 import xyz.yuuki.navidroid.CacheOnly
+import xyz.yuuki.navidroid.CoverArt
 import xyz.yuuki.navidroid.Kind
 import xyz.yuuki.navidroid.Mix
 import xyz.yuuki.navidroid.Playlist
@@ -362,10 +363,9 @@ fun SelectionBar(modifier: Modifier = Modifier) {
 fun coverRequest(ctx: Context, id: String, size: Int): ImageRequest.Builder {
     val file = App.it.offline.coverFile(id).takeIf { it.exists() }
     return ImageRequest.Builder(ctx)
-        .data(file ?: App.it.api.coverUrl(id, size))
+        .data(file ?: CoverArt(id, size))
         // Keyed by id, not URL: the URL changes with the endpoint and the auth salt.
         .memoryCacheKey("$id@$size")
-        .diskCacheKey("$id@$size")
 }
 
 @Composable

@@ -11,16 +11,27 @@ import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import coil3.disk.DiskCache
+import coil3.decode.DataSource
+import coil3.decode.ImageSource
 import coil3.disk.directory
+import coil3.fetch.FetchResult
+import coil3.fetch.Fetcher
+import coil3.fetch.SourceFetchResult
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import coil3.request.Options
 import coil3.request.crossfade
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.withContext
+import okhttp3.Request
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
+import okio.ByteString.Companion.toByteString
 import java.io.ByteArrayOutputStream
+import java.io.IOException
 
 class App : Application(), SingletonImageLoader.Factory {
     companion object {
@@ -75,7 +86,10 @@ class App : Application(), SingletonImageLoader.Factory {
         .crossfade(150)
         // The disk cache is read before the network, so covers seen once also show offline.
         .diskCache { DiskCache.Builder().directory(cacheDir.resolve("images")).maxSizeBytes(512L * 1024 * 1024).build() }
-        .components { add(OkHttpNetworkFetcherFactory(callFactory = { imageHttp })) }
+        .components {
+            add(CoverFetcher.Factory())
+            add(OkHttpNetworkFetcherFactory(callFactory = { imageHttp }))
+        }
         .build()
 }
 
@@ -92,4 +106,36 @@ private fun webp(r: Response): Response {
     if (out.size() >= bytes.size) return keep
     return r.newBuilder().removeHeader("Content-Length").header("Content-Type", "image/webp")
         .body(out.toByteArray().toResponseBody("image/webp".toMediaType())).build()
+}
+
+/** A cover by id and pixel size, for [CoverFetcher]. */
+data class CoverArt(val id: String, val size: Int)
+
+/**
+ * Covers in the disk cache by content: each id points at the SHA-256 of its picture, so an album's
+ * songs, which mostly share one cover under ids of their own, keep a single copy between them.
+ */
+private class CoverFetcher(private val art: CoverArt, private val cache: DiskCache) : Fetcher {
+    override suspend fun fetch(): FetchResult = withContext(Dispatchers.IO) {
+        val key = "${art.id}@${art.size}"
+        val fs = cache.fileSystem
+        // A pointer keeps the hash in its metadata and leaves its data empty.
+        val hash = cache.openSnapshot("ref:$key")?.use { fs.read(it.metadata) { readUtf8() } }
+        // Before, each cover sat under its own key.
+        (hash?.let(cache::openSnapshot) ?: cache.openSnapshot(key))?.let { return@withContext disk(it) }
+        val bytes = App.it.imageHttp.newCall(Request.Builder().url(App.it.api.coverUrl(art.id, art.size)).build()).execute().use { r ->
+            if (!r.isSuccessful) throw IOException("HTTP ${r.code} for cover ${art.id}")
+            r.body!!.bytes()
+        }
+        val sha = "sha:" + bytes.toByteString().sha256().hex()
+        cache.openEditor("ref:$key")?.run { fs.write(metadata) { writeUtf8(sha) }; fs.write(data) {}; commit() }
+        val snap = cache.openSnapshot(sha) ?: cache.openEditor(sha)?.run { fs.write(data) { write(bytes) }; commitAndOpenSnapshot() }
+        snap?.let(::disk) ?: SourceFetchResult(ImageSource(Buffer().write(bytes), fs), null, DataSource.NETWORK)
+    }
+
+    private fun disk(s: DiskCache.Snapshot) = SourceFetchResult(ImageSource(s.data, cache.fileSystem, closeable = s), null, DataSource.DISK)
+
+    class Factory : Fetcher.Factory<CoverArt> {
+        override fun create(data: CoverArt, options: Options, imageLoader: ImageLoader) = imageLoader.diskCache?.let { CoverFetcher(data, it) }
+    }
 }

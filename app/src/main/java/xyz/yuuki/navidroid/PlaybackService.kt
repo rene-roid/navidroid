@@ -120,7 +120,9 @@ class PlaybackService : MediaSessionService() {
             override fun onEvents(p: Player, events: Player.Events) {
                 if (events.containsAny(Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_TIMELINE_CHANGED, Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED, Player.EVENT_REPEAT_MODE_CHANGED)) {
                     val next = player.nextMediaItemIndex
-                    if (next != C.INDEX_UNSET) app.offline.preload(player.getMediaItemAt(next).song)
+                    val upNext = if (next != C.INDEX_UNSET) player.getMediaItemAt(next) else null
+                    app.offline.preload(upNext?.song)
+                    app.offline.compact(setOfNotNull(player.currentMediaItem?.mediaId, upNext?.mediaId))
                 }
             }
 

@@ -927,10 +927,11 @@ fun SongCacheScreen() {
                 CacheSummary(
                     "${list.size} songs • ${formatBytes(list.sumOf { it.bytes })}",
                     "Last heard first. Songs you play stay here so replays cost no data, and the next ones are fetched ahead " +
-                        "so they start at once; ${list.count { !it.whole }} are only that first bit.",
+                        "so they start at once; ${list.count { !it.whole }} are only that first bit. On Wi-Fi, songs above download quality " +
+                        "are swapped for a copy at it, so more fit.",
                 )
             }
-            items(list, key = { "${it.id}@${it.bitrate}" }) { CachedSong(it) }
+            items(list, key = { it.key }) { CachedSong(it) }
         }
         item { BottomSpacer() }
     }
@@ -955,10 +956,10 @@ private fun CachedSong(c: Streamed) {
 @Composable
 fun ImageCacheScreen() {
     val ctx = LocalContext.current
-    // Coil keeps each image as <key>.1 beside its headers in <key>.0.
+    // Coil keeps each image as <key>.1 beside its headers in <key>.0; a cover's pointer to its picture has an empty .1.
     val files by produceState<List<File>?>(null) {
         value = withContext(Dispatchers.IO) {
-            ctx.imageLoader.diskCache?.directory?.toFile()?.listFiles { f -> f.name.endsWith(".1") }?.sortedByDescending { it.lastModified() }.orEmpty()
+            ctx.imageLoader.diskCache?.directory?.toFile()?.listFiles { f -> f.name.endsWith(".1") && f.length() > 0 }?.sortedByDescending { it.lastModified() }.orEmpty()
         }
     }
     LazyVerticalGrid(

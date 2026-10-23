@@ -2,6 +2,7 @@ package xyz.yuuki.navidroid
 
 import android.app.Notification
 import android.net.Uri
+import android.system.Os
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.okhttp.OkHttpDataSource
@@ -32,10 +33,13 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.Request
+import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
 import java.io.File
+import java.nio.file.Files
 import xyz.yuuki.navidroid.ui.coverRequest
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Song URIs are resolved against whichever endpoint is active when the bytes are actually fetched. */
 fun songUri(id: String, downloadBitrate: Int? = null): Uri =
@@ -60,7 +64,9 @@ class Offline(private val app: App) {
     val cache = SimpleCache(File(app.filesDir, "media"), NoOpCacheEvictor(), db)
     /** Songs heard or preloaded while streaming; the oldest go first. */
     private val streamCache = SimpleCache(File(app.cacheDir, "stream"), LeastRecentlyUsedCacheEvictor(1L shl 30), db)
+    /** A link per cover id, into [coverBlobs], which holds each distinct picture once by its SHA-256. */
     private val covers = File(app.filesDir, "covers").apply { mkdirs() }
+    private val coverBlobs = File(covers, "blobs").apply { mkdirs() }
     private val snapshots = File(app.filesDir, "collections").apply { mkdirs() }
 
     private val upstream = ResolvingDataSource.Factory(
@@ -77,12 +83,46 @@ class Offline(private val app: App) {
 
     /**
      * Keyed by bitrate too, so a song cached on mobile data doesn't stick at that quality on Wi-Fi.
-     * "mp3" leaves behind the entries cut short by the old length estimates.
+     * "mp3" leaves behind the entries cut short by the old length estimates. A whole [compact] copy wins over both.
      */
     private val streamed = CacheDataSource.Factory()
         .setCache(streamCache)
-        .setCacheKeyFactory { "${it.key ?: it.uri}@${app.streamBitrate}mp3" }
+        .setCacheKeyFactory { spec -> (spec.key ?: spec.uri.toString()).let { id -> compactKey(id).takeIf(::isWhole) ?: "$id@${app.streamBitrate}mp3" } }
         .setUpstreamDataSourceFactory(upstream)
+
+    private val compacted = CacheDataSource.Factory().setCache(streamCache).setUpstreamDataSourceFactory(upstream)
+    private val compacting = AtomicBoolean()
+
+    private fun compactKey(id: String) = "$id@${app.prefs.downloadBitrate}opus"
+
+    private fun isWhole(key: String) =
+        ContentMetadata.getContentLength(streamCache.getContentMetadata(key)).let { it > 0 && streamCache.isCached(key, 0, it) }
+
+    /**
+     * Swaps whole songs in the stream cache that sit above download quality for an Opus copy at it, a
+     * fraction of the size, so the cache holds several times more. Leaves [keep] (playing and up next)
+     * alone, and only runs on Wi-Fi, as each song is fetched again.
+     */
+    fun compact(keep: Set<String>) {
+        val target = app.prefs.downloadBitrate
+        if (target == 0 || app.metered || !compacting.compareAndSet(false, true)) return
+        app.scope.launch(Dispatchers.IO) {
+            try {
+                for (key in streamCache.keys.toList()) {
+                    if (app.metered) break
+                    val id = key.substringBeforeLast('@')
+                    val br = key.substringAfterLast('@').takeIf { it.endsWith("mp3") }?.removeSuffix("mp3")?.toIntOrNull() ?: continue
+                    // Same rule as downloads: re-encoding a song that is already small costs quality and saves little.
+                    if (id in keep || br in 1..target * 5 / 4 || !isWhole(key)) continue
+                    val copy = compactKey(id)
+                    runCatching { CacheWriter(compacted.createDataSource(), DataSpec.Builder().setUri(songUri(id, target)).setKey(copy).build(), null, null).cache() }
+                    streamCache.removeResource(if (isWhole(copy)) key else copy)
+                }
+            } finally {
+                compacting.set(false)
+            }
+        }
+    }
 
     /** Reads downloaded songs from disk, then songs already streamed or preloaded, and streams the rest. */
     val playback: CacheDataSource.Factory = CacheDataSource.Factory()
@@ -268,16 +308,19 @@ class Offline(private val app: App) {
     fun coverFile(id: String) = File(covers, id.replace('/', '_'))
 
     private fun fetchCover(id: String) {
-        app.imageHttp.newCall(Request.Builder().url(app.api.coverUrl(id, 600)).build()).execute().use { r ->
+        val bytes = app.imageHttp.newCall(Request.Builder().url(app.api.coverUrl(id, 600)).build()).execute().use { r ->
             if (!r.isSuccessful) return
-            val tmp = File(covers, "$id.part")
-            tmp.outputStream().use { r.body!!.byteStream().copyTo(it) }
-            tmp.renameTo(coverFile(id))
+            r.body!!.bytes()
         }
+        val blob = File(coverBlobs, bytes.toByteString().sha256().hex())
+        if (!blob.exists()) File(coverBlobs, "${blob.name}.part").apply { writeBytes(bytes) }.renameTo(blob)
+        // A link left dangling by a missing blob blocks a new one.
+        coverFile(id).delete()
+        Os.symlink(blob.path, coverFile(id).path)
     }
 
-    /** Bytes used by downloaded songs and their covers. */
-    fun bytesUsed() = cache.cacheSpace + (covers.listFiles()?.sumOf { it.length() } ?: 0L)
+    /** Bytes used by downloaded songs and their covers; links take no space, and older covers are plain files. */
+    fun bytesUsed() = cache.cacheSpace + covers.walk().filter { it.isFile && !Files.isSymbolicLink(it.toPath()) }.sumOf { it.length() }
 
     /** Bytes used by songs kept from streaming and preloading. */
     fun streamBytes() = streamCache.cacheSpace
@@ -289,8 +332,9 @@ class Offline(private val app: App) {
         val spans = streamCache.getCachedSpans(key)
         val bytes = spans.sumOf { it.length }
         Streamed(
+            key,
             key.substringBeforeLast('@'),
-            key.substringAfterLast('@').removeSuffix("mp3").toIntOrNull() ?: 0,
+            key.substringAfterLast('@').removeSuffix("mp3").removeSuffix("opus").toIntOrNull() ?: 0,
             bytes,
             ContentMetadata.getContentLength(streamCache.getContentMetadata(key)).let { it > 0 && bytes >= it },
             spans.maxOfOrNull { it.lastTouchTimestamp } ?: 0,
@@ -303,7 +347,7 @@ class Offline(private val app: App) {
 }
 
 /** A song in the stream cache; [bitrate] 0 is the original file, and it isn't [whole] when only its start was fetched ahead. */
-class Streamed(val id: String, val bitrate: Int, val bytes: Long, val whole: Boolean, val touched: Long)
+class Streamed(val key: String, val id: String, val bitrate: Int, val bytes: Long, val whole: Boolean, val touched: Long)
 
 class DownloadSvc : DownloadService(1, DEFAULT_FOREGROUND_NOTIFICATION_UPDATE_INTERVAL, Offline.CHANNEL, R.string.downloads, 0) {
     private val offline get() = (application as App).offline
