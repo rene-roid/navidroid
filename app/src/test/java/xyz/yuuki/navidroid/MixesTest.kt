@@ -59,6 +59,24 @@ class MixesTest {
     }
 
     @Test
+    fun artistRadioAlternates() {
+        assertEquals(listOf("a", "1", "2", "b", "3", "4", "5"), interleave(listOf("a", "b"), listOf("1", "2", "3", "4", "5")))
+        assertEquals(listOf("a", "1", "b", "c"), interleave(listOf("a", "b", "c"), listOf("1")))
+        val ado = artistMix(Kind.ArtistRadio, "ar1", "Ado")
+        assertEquals("Ado Radio", ado.title)
+        assertEquals("topMixes", ado.section)
+    }
+
+    @Test
+    fun collabsShareTheCredit() {
+        fun song(artist: String, vararg ids: String) = Song("s", "t", artist, ids.firstOrNull(), "al", null, null, 0, 0, 0, false, null, 0, ids.map { it to it })
+        assertEquals(false, song("Ado", "ado").withOthers("ado"))
+        assertEquals(true, song("Ado, Eve", "ado", "eve").withOthers("ado"))
+        assertEquals(true, song("Ado feat. Eve").withOthers("ado"))
+        assertEquals(false, song("Ado").withOthers("ado"))
+    }
+
+    @Test
     fun endpointsAreNormalized() {
         assertEquals("https://music.thekenji.xyz", normalizeEndpoint("music.thekenji.xyz/app/#/"))
         assertEquals("http://192.168.68.63:4533", normalizeEndpoint("http://192.168.68.63:4533/app/#/"))

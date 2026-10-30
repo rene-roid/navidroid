@@ -46,7 +46,7 @@ import androidx.compose.material.icons.rounded.ArrowCircleDown
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudOff
-import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.outlined.ArrowCircleDown
 import androidx.compose.material.icons.rounded.DownloadForOffline
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
@@ -62,6 +62,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -144,6 +145,7 @@ import xyz.yuuki.navidroid.buildHome
 import xyz.yuuki.navidroid.likedTile
 import xyz.yuuki.navidroid.list
 import xyz.yuuki.navidroid.tile
+import xyz.yuuki.navidroid.withOthers
 import java.io.File
 import java.util.Calendar
 
@@ -455,11 +457,14 @@ fun ListRow(title: String, subtitle: String, cover: @Composable () -> Unit, trai
 @Composable
 fun LibraryScreen(column: Boolean = false) {
     val nav = LocalNav.current
-    var tab by rememberSaveable { mutableStateOf("Playlists") }
+    // No type picked shows everything in one list; the heart and the download filters narrow whatever is shown.
+    var tab by rememberSaveable { mutableStateOf<String?>(null) }
     var onlySaved by rememberSaveable { mutableStateOf(false) }
+    var onlyDownloaded by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     fun hit(vararg text: String?) = query.isBlank() || text.any { it?.contains(query.trim(), ignoreCase = true) == true }
     val pins by offline.pins.collectAsStateWithLifecycle()
+    val downloaded = remember(pins) { pinnedTiles(pins) }
     val playlists = rememberLoad("playlists") { api.playlists() }
     var creating by remember { mutableStateOf(false) }
     if (creating) NewPlaylist { id ->
@@ -473,8 +478,8 @@ fun LibraryScreen(column: Boolean = false) {
     val list = rememberLazyListState()
 
     // Albums page in as you scroll, or all the way through while searching so every album can match.
-    LaunchedEffect(tab, onlySaved) {
-        if (tab != "Albums" || onlySaved) return@LaunchedEffect
+    LaunchedEffect(tab, onlySaved, onlyDownloaded) {
+        if (tab != "Albums" || onlySaved || onlyDownloaded) return@LaunchedEffect
         snapshotFlow { if (!albumsDone && (query.isNotBlank() || (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= albums.size - 20)) albums.size else -1 }
             .filter { it >= 0 }
             .distinctUntilChanged()
@@ -554,15 +559,20 @@ fun LibraryScreen(column: Boolean = false) {
                 selectedContainerColor = Accent, selectedLabelColor = OnAccent, selectedLeadingIconColor = OnAccent,
             )
             Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                // Narrows whichever tab is open to what you saved.
                 FilterChip(
                     onlySaved, { onlySaved = !onlySaved },
                     { Icon(if (onlySaved) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Only saved", Modifier.size(18.dp)) },
                     shape = RoundedCornerShape(32.dp), border = null, colors = chipColors,
                 )
+                FilterChip(
+                    onlyDownloaded, { onlyDownloaded = !onlyDownloaded },
+                    { Icon(if (onlyDownloaded) Icons.Rounded.ArrowCircleDown else Icons.Outlined.ArrowCircleDown, "Only downloaded", Modifier.size(18.dp)) },
+                    shape = RoundedCornerShape(32.dp), border = null, colors = chipColors,
+                )
+                // Tapping the picked type again goes back to everything.
                 LIBRARY_TABS.forEach { (t, icon) ->
                     FilterChip(
-                        tab == t, { tab = t }, { Text(t, maxLines = 1, softWrap = false) },
+                        tab == t, { tab = if (tab == t) null else t }, { Text(t, maxLines = 1, softWrap = false) },
                         leadingIcon = { Icon(icon, null, Modifier.size(18.dp)) },
                         shape = RoundedCornerShape(32.dp), border = null, colors = chipColors,
                     )
@@ -577,80 +587,57 @@ fun LibraryScreen(column: Boolean = false) {
         // The gap under the filters is list padding, so rows scroll right up to the filters before fading.
         LazyColumn(Modifier.fillMaxSize().then(topFade), state = list, contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp)) {
             val pinnedIds = pins.map { "${it.kind}:${it.id}" }.toSet()
-            @Composable
-            fun mark(kind: Kind, id: String, saved: Boolean = false) {
-                if (saved) FavoriteMark()
-                if ("$kind:$id" in pinnedIds) DownloadedMark()
-            }
+            fun pinned(t: Tile) = "${t.kind}:${t.id}" in pinnedIds
             // Saved items first; the server list is refreshed on every visit, overrides cover the gap.
             val savedAlbums = starred.data?.list("album").orEmpty().map(xyz.yuuki.navidroid.Album::from).filter { Likes.isLiked(it.id, true) }
             val savedArtists = starred.data?.list("artist").orEmpty().map(xyz.yuuki.navidroid.Artist::from).filter { Likes.isLiked(it.id, true) }
-            @Composable
-            fun playlistRow(p: xyz.yuuki.navidroid.Playlist) {
-                val t = p.tile()
-                ListRow(t.title, if (p.mix != null) "Mix • ${p.mix.by}" else "Playlist • ${p.owner}", { TileCover(Kind.Playlist, p.id, p.coverArt, p.mix, Modifier.size(56.dp), 120) }, { mark(Kind.Playlist, p.id, p.id in Likes.playlists) }, t) {
-                    nav.open(t)
-                }
-            }
             val savedAlbumIds = savedAlbums.map { it.id }.toSet()
             val savedArtistIds = savedArtists.map { it.id }.toSet()
-            fun saved(kind: Kind, id: String) = when (kind) {
-                Kind.Playlist -> id in Likes.playlists
-                Kind.Album -> id in savedAlbumIds
-                Kind.Artist -> id in savedArtistIds
+            fun saved(t: Tile) = when (t.kind) {
+                Kind.Playlist -> t.id in Likes.playlists
+                Kind.Album -> t.id in savedAlbumIds
+                Kind.Artist -> t.id in savedArtistIds
                 Kind.Liked -> true
                 Kind.Genre -> false
+                Kind.ArtistMix, Kind.ArtistRadio -> Likes.hasMix(t.kind, t.id)
             }
-            fun emptySaved() = item("none") {
-                Text("Nothing saved here yet. Tap the heart on a playlist, album or artist.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 24.dp))
+            // Every album and artist on the server only under their own filter; everywhere else just the saved ones.
+            val rows = listOf(likedTile(null)) +
+                playlists.data.orEmpty().filter { it.id !in Hidden.playlists }.map { p -> p.tile().copy(subtitle = if (p.mix != null) "Mix • ${p.mix.by}" else "Playlist • ${p.owner}") } +
+                Likes.mixes.map { it.copy(subtitle = "Mix • ${it.mix?.by}") } +
+                (savedAlbums + if (tab == "Albums") albums.filter { it.id !in savedAlbumIds } else emptyList()).map { it.tile().copy(subtitle = "Album • ${it.artist}") } +
+                (savedArtists + if (tab == "Artists") artists.data.orEmpty().filter { it.id !in savedArtistIds } else emptyList()).map { it.tile() }
+            val keys = rows.map { "${it.kind}:${it.id}" }.toSet()
+            val shown = (rows + downloaded.filter { "${it.kind}:${it.id}" !in keys })
+                .filter { (tab == null || libraryType(it) == tab) && (!onlySaved || saved(it)) && (!onlyDownloaded || pinned(it)) && hit(it.title, it.subtitle) }
+                .sortedBy { !saved(it) }
+            @Composable
+            fun row(t: Tile) = ListRow(t.title, t.subtitle, { TileCover(t.kind, t.id, t.coverArt, t.mix, Modifier.size(56.dp), 120) }, {
+                if (saved(t) && t.kind != Kind.Liked) FavoriteMark()
+                if (pinned(t)) DownloadedMark()
+            }, t) { nav.open(t) }
+
+            val (liked, rest) = shown.partition { it.kind == Kind.Liked }
+            items(liked, key = { "${it.kind}:${it.id}" }) { row(it) }
+            if (tab == "Playlists" && !onlySaved && !onlyDownloaded && query.isBlank()) item("new") {
+                ListRow("Create playlist", "Then add songs from any song's menu", { Box(Modifier.size(56.dp).background(Tile, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, null) } }) { creating = true }
             }
-            val (mixes, ownPlaylists) = playlists.data.orEmpty()
-                .filter { it.id !in Hidden.playlists && (!onlySaved || it.id in Likes.playlists) && hit(it.tile().title, it.owner) }
-                .sortedBy { it.id !in Likes.playlists }.partition { it.mix != null }
-            when (tab) {
-                "Playlists" -> {
-                    if (hit("Liked Songs")) item("liked") {
-                        ListRow("Liked Songs", "Playlist", { LikedCover(Modifier.size(56.dp)) }, { mark(Kind.Liked, "liked") }, likedTile(null)) { nav.go(Route.Open(Kind.Liked, "liked")) }
+            if (tab == "Mixes") {
+                val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+                MIX_SECTIONS.forEach { (section, title) ->
+                    val group = rest.filter { it.mix?.section == section }.sortedWith(compareBy({ !saved(it) }, { xyz.yuuki.navidroid.mixOrder(it.mix!!, hour) }))
+                    if (group.isNotEmpty()) item("section:$section") {
+                        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.W700, modifier = Modifier.padding(top = 16.dp, bottom = 4.dp))
                     }
-                    if (!onlySaved && query.isBlank()) item("new") {
-                        ListRow("Create playlist", "Then add songs from any song's menu", { Box(Modifier.size(56.dp).background(Tile, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, null) } }) { creating = true }
-                    }
-                    items(ownPlaylists, key = { it.id }) { playlistRow(it) }
+                    items(group, key = { "${it.kind}:${it.id}" }) { row(it) }
                 }
-                "Mixes" -> {
-                    if (onlySaved && mixes.isEmpty()) emptySaved()
-                    val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-                    val sorted = mixes.sortedWith(compareBy({ it.id !in Likes.playlists }, { xyz.yuuki.navidroid.mixOrder(it.mix!!, hour) }))
-                    MIX_SECTIONS.forEach { (section, title) ->
-                        val group = sorted.filter { it.mix!!.section == section }
-                        if (group.isNotEmpty()) item("section:$section") {
-                            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.W700, modifier = Modifier.padding(top = 16.dp, bottom = 4.dp))
-                        }
-                        items(group, key = { it.id }) { playlistRow(it) }
-                    }
-                }
-                "Albums" -> {
-                    if (onlySaved && savedAlbums.isEmpty()) emptySaved()
-                    items((if (onlySaved) savedAlbums else savedAlbums + albums.filter { it.id !in savedAlbumIds }).filter { hit(it.name, it.artist) }, key = { it.id }) { a ->
-                        ListRow(a.name, "Album • ${a.artist}", { Cover(a.coverArt, 120, Modifier.size(56.dp)) }, { mark(Kind.Album, a.id, a.id in savedAlbumIds) }, a.tile()) { nav.go(Route.Open(Kind.Album, a.id)) }
-                    }
-                }
-                "Artists" -> {
-                    if (onlySaved && savedArtists.isEmpty()) emptySaved()
-                    items((if (onlySaved) savedArtists else savedArtists + artists.data.orEmpty().filter { it.id !in savedArtistIds }).filter { hit(it.name) }, key = { it.id }) { a ->
-                        ListRow(a.name, "Artist", { Cover(a.coverArt, 120, Modifier.size(56.dp), CircleShape) }, { mark(Kind.Artist, a.id, a.id in savedArtistIds) }, a.tile()) { nav.go(Route.Open(Kind.Artist, a.id)) }
-                    }
-                }
-                else -> {
-                    val tiles = pinnedTiles(pins).filter { (!onlySaved || saved(it.kind, it.id)) && hit(it.title, it.subtitle) }
-                    if (tiles.isEmpty() && onlySaved) emptySaved()
-                    else if (tiles.isEmpty() && query.isBlank()) item("none") {
-                        Text("Tap the download button on a playlist or album to keep it on this phone.", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 24.dp))
-                    }
-                    items(tiles, key = { "${it.kind}:${it.id}" }) { t ->
-                        ListRow(t.title, t.subtitle, { TileCover(t.kind, t.id, t.coverArt, t.mix, Modifier.size(56.dp), 120) }, { mark(t.kind, t.id, t.kind != Kind.Liked && saved(t.kind, t.id)) }, t) { nav.open(t) }
-                    }
-                }
+            } else items(rest, key = { "${it.kind}:${it.id}" }) { row(it) }
+            if (shown.isEmpty() && (onlySaved || onlyDownloaded)) item("none") {
+                Text(
+                    if (onlyDownloaded) "Nothing downloaded here yet. Tap the download button on a playlist or album to keep it on this phone."
+                    else "Nothing saved here yet. Tap the heart on a playlist, album or artist.",
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 24.dp),
+                )
             }
             item("end") { if (column) Spacer(Modifier.height(8.dp)) else BottomSpacer() }
         }
@@ -662,8 +649,16 @@ private val LIBRARY_TABS = listOf(
     "Mixes" to Icons.Rounded.AutoAwesome,
     "Albums" to Icons.Rounded.Album,
     "Artists" to Icons.Rounded.Person,
-    "Downloaded" to Icons.Rounded.DownloadDone,
 )
+
+/** Which type filter a library row is under; downloaded genres only show with none picked. */
+private fun libraryType(t: Tile) = when {
+    t.kind == Kind.Liked || t.kind == Kind.Playlist && t.mix == null -> "Playlists"
+    t.mix != null -> "Mixes"
+    t.kind == Kind.Album -> "Albums"
+    t.kind == Kind.Artist -> "Artists"
+    else -> null
+}
 
 /** Mix sections, in the same order and wording as the home screen. */
 private val MIX_SECTIONS = listOf(
@@ -692,6 +687,7 @@ fun CollectionScreen(kind: Kind, id: String) {
     LaunchedEffect(c) { c?.coverArt?.takeIf { c.mix == null }?.let { nav.arts[Route.Open(kind, id)] = it } }
 
     val playingThis = player?.isPlaying == true && player.from == c?.title
+    val artistMix = kind == Kind.ArtistMix || kind == Kind.ArtistRadio
 
     val backdrop = rememberGraphicsLayer()
     Box(Modifier.fillMaxSize()) {
@@ -718,7 +714,7 @@ fun CollectionScreen(kind: Kind, id: String) {
                 if (row) Row(Modifier.statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp), verticalAlignment = Alignment.Bottom) {
                     cover()
                     Column(Modifier.padding(start = 20.dp)) { CollectionInfo(kind, c) }
-                } else if (kind == Kind.Playlist) {
+                } else if (kind == Kind.Playlist || artistMix) {
                     // Playlists and mixes run edge to edge and up under the status bar, fading out behind the title.
                     Box(Modifier.fillMaxWidth()) {
                         val fade = Modifier.matchParentSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawWithContent {
@@ -751,6 +747,7 @@ fun CollectionScreen(kind: Kind, id: String) {
                     if (c != null) PinButton(c)
                     if (c != null && kind == Kind.Album) HeartButton(Likes.isLiked(c.id, c.starred)) { Likes.toggle(c.id, c.starred, "albumId") }
                     if (c != null && kind == Kind.Playlist) HeartButton(c.id in Likes.playlists) { Likes.togglePlaylist(c.id) }
+                    if (artistMix && c?.by != null) HeartButton(Likes.hasMix(kind, id)) { Likes.toggleMix(xyz.yuuki.navidroid.artistMixTile(kind, id, c.by, c.coverArt)) }
                     Spacer(Modifier.weight(1f))
                     IconButton({ c?.let { player?.play(it.songs, shuffled = true, from = it.title) } }) {
                         Icon(Icons.Rounded.Shuffle, "Shuffle play", Modifier.size(28.dp), tint = Sub)
@@ -899,14 +896,17 @@ fun ArtistScreen(id: String) {
     LaunchedEffect(a) { a?.let { App.it.offline.warm(it.top) } }
     val list = rememberLazyListState()
     val collapsed by remember { derivedStateOf { list.firstVisibleItemIndex > 0 } }
-    // Like the web UI: most artists have no photo, so show their most played album.
-    val image = a?.albums?.maxByOrNull { it.playCount }?.coverArt ?: a?.artist?.coverArt
+    val image = a?.image
     val color = rememberCoverColor(image)
     val scope = rememberCoroutineScope()
     val nav = LocalNav.current
     LaunchedEffect(color) { nav.tints[Route.Open(Kind.Artist, id)] = color }
     LaunchedEffect(image) { image?.let { nav.arts[Route.Open(Kind.Artist, id)] = it } }
     val wide = isWide()
+    // Songs they share the credit on, wherever they came out, newest first.
+    val collabs = remember(a) { a?.songs.orEmpty().filter { it.withOthers(id) }.sortedByDescending { it.year } }
+    var allTop by rememberSaveable { mutableStateOf(false) }
+    var allCollabs by rememberSaveable { mutableStateOf(false) }
 
     val backdrop = rememberGraphicsLayer()
     Box(Modifier.fillMaxSize()) {
@@ -931,10 +931,14 @@ fun ArtistScreen(id: String) {
             }
             if (a == null) item("loading") { if (load.error != null) ErrorText(load.error) else Loading() }
             if (a != null) {
+                val (singles, albums) = a.albums.partition { it.single }
                 item("actions") {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         HeartButton(Likes.isLiked(a.artist.id, a.artist.starred)) { Likes.toggle(a.artist.id, a.artist.starred, "artistId") }
-                        Text(if (a.albums.size == 1) "1 release" else "${a.albums.size} releases", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                        Text(
+                            listOfNotNull(count(albums.size, "album"), count(singles.size, "single")).joinToString(" • "),
+                            style = MaterialTheme.typography.bodySmall, maxLines = 2, modifier = Modifier.weight(1f),
+                        )
                         IconButton({
                             scope.launch { runCatching { player?.play(api.artistSongs(a), shuffled = true, from = a.artist.name) } }
                         }) { Icon(Icons.Rounded.Shuffle, "Shuffle", Modifier.size(28.dp), tint = Sub) }
@@ -946,15 +950,37 @@ fun ArtistScreen(id: String) {
                 }
                 if (a.top.isNotEmpty()) {
                     item("popular") { SectionHeader("Popular") }
-                    itemsIndexed(a.top.take(5), key = { _, s -> "top" + s.id }) { i, s ->
+                    itemsIndexed(a.top.take(if (allTop) 10 else 5), key = { _, s -> "top" + s.id }) { i, s ->
                         TrackRow(s, { player?.play(a.top, i, from = a.artist.name) }, number = i + 1)
                     }
+                    if (a.top.size > 5) item("popular-more") { SeeMore(allTop) { allTop = !allTop } }
                 }
-                val (singles, albums) = a.albums.partition { it.single }
-                for ((title, releases) in listOf("Albums" to albums, "Singles and EPs" to singles, "Appears on" to a.appearsOn)) if (releases.isNotEmpty()) item(title) {
+                item("mixes") {
+                    SectionHeader("Mixes")
+                    LazyRow(contentPadding = PaddingValues(horizontal = 10.dp)) {
+                        items(listOf(Kind.ArtistMix, Kind.ArtistRadio), key = { it.name }) { Card(xyz.yuuki.navidroid.artistMixTile(it, id, a.artist.name, image)) }
+                    }
+                }
+                for ((title, releases) in listOf("Albums" to albums, "Singles and EPs" to singles)) if (releases.isNotEmpty()) item(title) {
                     SectionHeader(title)
                     LazyRow(contentPadding = PaddingValues(horizontal = 10.dp)) {
-                        items(releases, key = { it.id }) { Card(it.tile()) }
+                        // Their own name under each would only repeat the page's.
+                        items(releases, key = { it.id }) { r ->
+                            Card(r.tile().copy(subtitle = listOfNotNull(r.year.takeIf { it > 0 }?.toString(), count(r.songCount, "song")).joinToString(" • ")))
+                        }
+                    }
+                }
+                if (collabs.isNotEmpty()) {
+                    item("collabs") { SectionHeader("Collaborations") }
+                    itemsIndexed(if (allCollabs) collabs else collabs.take(5), key = { _, s -> "collab" + s.id }) { i, s ->
+                        TrackRow(s, { player?.play(collabs, i, from = a.artist.name) })
+                    }
+                    if (collabs.size > 5) item("collabs-more") { SeeMore(allCollabs) { allCollabs = !allCollabs } }
+                }
+                if (a.appearsOn.isNotEmpty()) item("Appears on") {
+                    SectionHeader("Appears on")
+                    LazyRow(contentPadding = PaddingValues(horizontal = 10.dp)) {
+                        items(a.appearsOn, key = { it.id }) { Card(it.tile()) }
                     }
                 }
             }
@@ -962,4 +988,12 @@ fun ArtistScreen(id: String) {
         }
         TopBar(a?.artist?.name ?: "", color, collapsed, backdrop)
     }
+}
+
+/** "3 albums"; null for none. */
+private fun count(n: Int, what: String) = if (n <= 0) null else "$n $what${if (n == 1) "" else "s"}"
+
+@Composable
+private fun SeeMore(open: Boolean, onClick: () -> Unit) = TextButton(onClick, Modifier.padding(start = 6.dp)) {
+    Text(if (open) "Show less" else "See more", style = MaterialTheme.typography.labelLarge, color = Sub)
 }

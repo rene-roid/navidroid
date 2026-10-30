@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -27,10 +28,12 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import kotlin.random.Random
 
 // ---- models ---------------------------------------------------------------------------------
 
-enum class Kind { Playlist, Album, Artist, Liked, Genre }
+/** [ArtistMix] and [ArtistRadio] are made on the phone from an artist's songs; their id is the artist's. */
+enum class Kind { Playlist, Album, Artist, Liked, Genre, ArtistMix, ArtistRadio }
 
 data class Song(
     val id: String,
@@ -82,6 +85,7 @@ data class Album(
     val id: String, val name: String, val artist: String, val artistId: String?,
     val coverArt: String?, val year: Int, val songCount: Int, val playCount: Int, val starred: Boolean = false,
     val single: Boolean = false,
+    val genre: String? = null,
 ) {
     companion object {
         fun from(o: JSONObject) = Album(
@@ -95,6 +99,7 @@ data class Album(
             playCount = o.optInt("playCount"),
             starred = o.has("starred"),
             single = isSingle(o.optJSONArray("releaseTypes")?.let { t -> List(t.length()) { t.optString(it) } }.orEmpty(), o.optInt("songCount"), o.optInt("duration")),
+            genre = o.s("genre"),
         )
 
         /** Tagged release type when there is one, otherwise Spotify's rule: up to 6 songs and under 30 minutes. */
@@ -161,7 +166,11 @@ data class Collection(
     }
 }
 
-data class ArtistPage(val artist: Artist, val albums: List<Album>, val top: List<Song>, val appearsOn: List<Album> = emptyList())
+/** [songs]: every song found crediting them, on their releases or anyone else's. */
+data class ArtistPage(val artist: Artist, val albums: List<Album>, val top: List<Song>, val appearsOn: List<Album> = emptyList(), val songs: List<Song> = emptyList()) {
+    /** Like the web UI: most artists have no photo, so their most played album stands in. */
+    val image get() = albums.maxByOrNull { it.playCount }?.coverArt ?: artist.coverArt
+}
 data class SearchResult(val artists: List<Artist>, val albums: List<Album>, val songs: List<Song>)
 data class Genre(val name: String, val songCount: Int)
 data class LyricLine(val ms: Long, val text: String)
@@ -184,6 +193,21 @@ fun JSONObject.list(k: String): List<JSONObject> = optJSONArray(k).objects()
 /** "A, B & C (feat. D)" → [A, B, C, D]. */
 fun artistNames(credit: String): List<String> =
     credit.split(Regex("""\s*(?:[,&/;()]|\bfeat\b\.?|\bft\b\.?)\s*""", RegexOption.IGNORE_CASE)).map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+
+/** Credited together with someone else, not to [artistId] alone. */
+fun Song.withOthers(artistId: String) = if (artists.isNotEmpty()) artists.any { it.first != artistId } else artistNames(artist).size > 1
+
+/** One of [own], then two of [others], and so on; once either runs out, the rest of the other follows. */
+fun <T> interleave(own: List<T>, others: List<T>): List<T> {
+    val a = own.iterator()
+    val b = others.iterator()
+    return buildList {
+        while (a.hasNext() || b.hasNext()) {
+            if (a.hasNext()) add(a.next())
+            repeat(2) { if (b.hasNext()) add(b.next()) }
+        }
+    }
+}
 
 // ---- settings -------------------------------------------------------------------------------
 
@@ -218,6 +242,14 @@ class Prefs(ctx: Context) {
     var hiddenPlaylists: Set<String>
         get() = p.getStringSet("hiddenPlaylists", null) ?: emptySet()
         set(v) = p.edit().putStringSet("hiddenPlaylists", v).apply()
+
+    /** Artist mixes and radios saved to the library; they're made on the phone, so they live here too. */
+    var savedMixes: List<Tile>
+        get() = p.getString("savedMixes", null)?.let(::JSONArray).objects()
+            .map { artistMixTile(Kind.valueOf(it.getString("kind")), it.getString("id"), it.getString("name"), it.s("cover")) }
+        set(v) = p.edit().putString(
+            "savedMixes", JSONArray(v.map { JSONObject().put("kind", it.kind.name).put("id", it.id).put("name", it.mix?.subject).put("cover", it.coverArt) }).toString(),
+        ).apply()
 
     /** Pinned collections, "Kind:id", kept downloaded and re-synced. */
     var pins: List<String>
@@ -467,6 +499,11 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
                     starred().list("song").map(Song::from).reversed())
                 Kind.Genre -> Collection(Kind.Genre, id, id, null, null, runCatching { genreCover(id) }.getOrNull(),
                     call("getSongsByGenre", "genre" to id, "count" to 500).getJSONObject("songsByGenre").list("song").map(Song::from))
+                Kind.ArtistMix, Kind.ArtistRadio -> artist(id).let { p ->
+                    val mix = artistMix(kind, id, p.artist.name)
+                    val songs = if (kind == Kind.ArtistMix) artistMixSongs(p) else artistRadio(p, mix.title)
+                    Collection(kind, id, mix.title, mix.description, p.artist.name, p.image, songs, mix, artistId = id)
+                }
                 Kind.Artist -> error("artists are not collections")
             }
         } catch (e: IOException) {
@@ -483,7 +520,7 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
         // getArtist only lists albums credited to this artist. Their songs on releases credited to someone
         // else (a duo, a label, a compilation) are found by searching; a release made only of their songs is theirs.
         val songs = runCatching {
-            call("search3", "query" to artist.name, "artistCount" to 0, "albumCount" to 0, "songCount" to 200)
+            call("search3", "query" to artist.name, "artistCount" to 0, "albumCount" to 0, "songCount" to 500)
                 .optJSONObject("searchResult3")?.list("song")?.filter { it.isBy(id) }
         }.getOrNull().orEmpty()
         val known = own.map { it.id }.toSet()
@@ -496,7 +533,7 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
         val (theirs, others) = extra.partition { a -> a.list("song").all { it.isBy(id) } }
         ArtistPage(
             artist, (own + theirs.map(Album::from)).sortedByDescending { it.year },
-            top.ifEmpty { songs.map(Song::from).take(10) }, others.map(Album::from).sortedByDescending { it.year },
+            top.ifEmpty { songs.map(Song::from).take(10) }, others.map(Album::from).sortedByDescending { it.year }, songs.map(Song::from),
         )
     }
 
@@ -515,7 +552,49 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
     private fun JSONObject.isBy(artistId: String) =
         s("artistId") == artistId || optJSONArray("artists").objects().any { it.s("id") == artistId }
 
-    suspend fun artistSongs(page: ArtistPage): List<Song> = page.albums.flatMap { collection(Kind.Album, it.id).songs }
+    /** Their releases in full, newest first, then their songs on anyone else's. */
+    suspend fun artistSongs(page: ArtistPage): List<Song> = coroutineScope {
+        page.albums.map { async { runCatching { collection(Kind.Album, it.id).songs }.getOrDefault(emptyList()) } }.awaitAll().flatten()
+    }.plus(page.songs).distinctBy { it.id }
+
+    /** "X Mix": every song of theirs, the popular ones first and the rest shuffled anew each day. */
+    private suspend fun artistMixSongs(p: ArtistPage) =
+        (p.top + artistSongs(p).shuffled(Random(p.artist.id.hashCode() * 31L + today()))).distinctBy { it.id }
+
+    /**
+     * "X Radio": one of their songs, then two by artists like them, and so on. Those come from the server's
+     * similar-artist data, topped up from the genres they play when it has little or none.
+     */
+    private suspend fun artistRadio(p: ArtistPage, title: String) = daily("radio:${p.artist.id}", title) {
+        val id = p.artist.id
+        fun JSONObject.others(k: String) = optJSONObject(k)?.list("song").orEmpty().filterNot { it.isBy(id) }.map(Song::from)
+        val similar = runCatching { call("getSimilarSongs2", "id" to id, "count" to 60).others("similarSongs2") }.getOrDefault(emptyList())
+        val genres = p.albums.mapNotNull { it.genre }.groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.take(2).map { it.key }
+        val alike = if (similar.size >= 30) similar else similar + genres.flatMap { g ->
+            runCatching { call("getRandomSongs", "size" to 30, "genre" to g).others("randomSongs") }.getOrDefault(emptyList())
+        }
+        interleave((p.top.take(5) + artistSongs(p).shuffled()).distinctBy { it.id }.take(17), alike.distinctBy { it.id }.shuffled().take(33))
+    }
+
+    private fun today() = System.currentTimeMillis() / 86_400_000
+
+    /**
+     * [load]'s songs, kept with the server's answers for the rest of the day, so a mix made from random picks
+     * stays put across restarts and doesn't swap its downloads at every sync.
+     */
+    private suspend fun daily(key: String, title: String, load: suspend () -> List<Song>): List<Song> {
+        val f = File(saved, md5("$key@${today()}"))
+        withContext(Dispatchers.IO) {
+            runCatching { JSONObject(f.readText()).getJSONObject("subsonic-response").getJSONObject("mix").list("song").map(Song::from) }.getOrNull()
+        }?.let { return it }
+        val songs = load()
+        // Not from the first look at saved answers, which only has what happened to be saved.
+        if (currentCoroutineContext()[CacheOnly] == null && songs.isNotEmpty()) withContext(Dispatchers.IO) {
+            val mix = JSONObject().put("name", title).put("song", JSONArray(songs.map { it.toJson() }))
+            f.writeText(JSONObject().put("subsonic-response", JSONObject().put("status", "ok").put("mix", mix)).toString())
+        }
+        return songs
+    }
 
     /**
      * Cover for an artist name, as the web UI picks it: the artist's most played album

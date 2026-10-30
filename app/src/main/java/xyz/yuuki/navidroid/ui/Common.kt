@@ -234,6 +234,17 @@ object Likes {
         playlists = if (id in playlists) playlists - id else playlists + id
         App.it.prefs.savedPlaylists = playlists
     }
+
+    /** Artist mixes and radios saved to the library. */
+    var mixes by mutableStateOf(App.it.prefs.savedMixes)
+        private set
+
+    fun hasMix(kind: Kind, id: String) = mixes.any { it.kind == kind && it.id == id }
+
+    fun toggleMix(t: Tile) {
+        mixes = if (hasMix(t.kind, t.id)) mixes.filterNot { it.kind == t.kind && it.id == t.id } else mixes + t
+        App.it.prefs.savedMixes = mixes
+    }
 }
 
 @Composable

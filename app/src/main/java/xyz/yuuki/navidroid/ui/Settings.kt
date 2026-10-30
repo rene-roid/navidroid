@@ -985,7 +985,7 @@ private val savedKinds = mapOf(
     "album" to "Album", "artist" to "Artist", "playlist" to "Playlist", "song" to "Song", "playlists" to "Your playlists",
     "albumList2" to "Album shelf", "artists" to "All artists", "starred2" to "Liked", "searchResult3" to "Search",
     "genres" to "Genres", "songsByGenre" to "Genre", "similarSongs2" to "Similar songs", "topSongs" to "Top songs",
-    "artistInfo2" to "Artist info", "lyricsList" to "Lyrics", "randomSongs" to "Random songs",
+    "artistInfo2" to "Artist info", "lyricsList" to "Lyrics", "randomSongs" to "Random songs", "mix" to "Today's mix",
 )
 
 /** What a saved server answer is about: its kind, and the name of the thing or a count of what's in it. */

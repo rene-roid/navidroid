@@ -158,6 +158,14 @@ data class Home(val greeting: String, val quick: List<Tile>, val sections: List<
 fun Playlist.tile() = Tile(Kind.Playlist, id, mix?.title ?: name, mix?.description ?: "By $owner", coverArt, mix)
 fun Album.tile() = Tile(Kind.Album, id, name, listOfNotNull(year.takeIf { it > 0 }, artist.ifBlank { null }).joinToString(" • "), coverArt)
 fun Artist.tile() = Tile(Kind.Artist, id, name, "Artist", coverArt)
+/** An artist page's own mixes: "X Mix" is all of their songs, "X Radio" mixes in artists like them. */
+fun artistMix(kind: Kind, artistId: String, name: String) =
+    if (kind == Kind.ArtistMix) Mix("artist", artistId, 0, "$name Mix", name, "Every song by $name, the popular ones first", name, paletteColor(name), true, "topMixes")
+    else Mix("artist-radio", artistId, 0, "$name Radio", name, "$name and artists like them", name, PALETTE[(colorHash(name) + 3) % PALETTE.size], true, "topMixes")
+
+fun artistMixTile(kind: Kind, artistId: String, name: String, cover: String?) =
+    artistMix(kind, artistId, name).let { Tile(kind, artistId, it.title, it.description, cover, it) }
+
 fun likedTile(count: Int?) = Tile(Kind.Liked, "liked", "Liked Songs", if (count == null) "Playlist" else "Playlist • $count song${if (count == 1) "" else "s"}", null)
 
 fun buildHome(
