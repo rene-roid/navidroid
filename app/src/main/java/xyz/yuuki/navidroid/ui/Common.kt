@@ -690,8 +690,9 @@ fun TrackRow(song: Song, onClick: () -> Unit, number: Int? = null, showArt: Bool
     } }
 }
 
+/** [more]: rows of the screen's own after the song's; they get what closes the menu. */
 @Composable
-fun SongMenu(song: Song, tint: Color = Sub) {
+fun SongMenu(song: Song, tint: Color = Sub, more: @Composable (close: () -> Unit) -> Unit = {}) {
     val nav = LocalNav.current
     val player = LocalPlayer.current
     var open by remember { mutableStateOf(false) }
@@ -713,6 +714,7 @@ fun SongMenu(song: Song, tint: Color = Sub) {
             song.albumId?.let { id -> item("Go to album", Icons.Rounded.Album) { nav.go(Route.Open(Kind.Album, id)) } }
             if (song.artistId != null) item("Go to artist", Icons.Rounded.Person) { goToArtist(song) }
             ShareItems(song.id, song.title) { open = false }
+            more { open = false }
         }
     }
     if (pick) AddToPlaylist(listOf(song)) { pick = false }
