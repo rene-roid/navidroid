@@ -1,6 +1,7 @@
 package xyz.yuuki.navidroid.ui
 
 import android.content.Context
+import android.widget.Toast
 import android.util.LruCache
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -66,6 +67,9 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -119,6 +123,8 @@ import xyz.yuuki.navidroid.Kind
 import xyz.yuuki.navidroid.Mix
 import xyz.yuuki.navidroid.Playlist
 import xyz.yuuki.navidroid.Song
+import xyz.yuuki.navidroid.networkReason
+import xyz.yuuki.navidroid.splitDuplicates
 import xyz.yuuki.navidroid.Tile
 
 // ---- navigation -----------------------------------------------------------------------------
@@ -176,6 +182,15 @@ val LocalPlayer = staticCompositionLocalOf<PlayerState?> { null }
 // ---- data loading ---------------------------------------------------------------------------
 
 private val uiCache = HashMap<String, Any?>()
+private val versions = mutableStateMapOf<String, Int>()
+
+/** Makes every open [rememberLoad] with one of [keys] fetch again, keeping what it shows until the answer comes. */
+fun invalidate(vararg keys: String) = keys.forEach { versions[it] = (versions[it] ?: 0) + 1 }
+
+/** Everything that lists playlists or one playlist's songs, after a playlist was made, changed or deleted. */
+fun playlistsChanged(id: String? = null) = invalidate("playlists", "home", *listOfNotNull(id?.let { "c:${Kind.Playlist}:$it" }).toTypedArray())
+
+fun toast(msg: String) = Toast.makeText(App.it, msg, Toast.LENGTH_SHORT).show()
 
 class Load<T>(val data: T?, val error: String?, val loading: Boolean, val refresh: () -> Unit)
 
@@ -187,7 +202,8 @@ fun <T> rememberLoad(key: String, loader: suspend () -> T): Load<T> {
     var error by remember(key) { mutableStateOf<String?>(null) }
     var loading by remember(key) { mutableStateOf(true) }
     var tick by remember(key) { mutableIntStateOf(0) }
-    LaunchedEffect(key, tick) {
+    val version = versions[key] ?: 0
+    LaunchedEffect(key, tick, version) {
         loading = true
         // Nothing in memory yet: open from the server's last answers on disk while the fresh ones load.
         if (data == null) try {
@@ -301,6 +317,9 @@ object Selection {
     val items = mutableStateListOf<Any>()
     val active get() = items.isNotEmpty()
 
+    /** What "Select all" picks: what the page in front shows, set by the page. */
+    var pool by mutableStateOf<List<Any>>(emptyList())
+
     private fun key(x: Any) = if (x is Song) "song:${x.id}" else (x as Tile).run { "$kind:$id" }
 
     fun has(x: Any) = items.any { key(it) == key(x) }
@@ -311,6 +330,11 @@ object Selection {
     }
 
     fun clear() = items.clear()
+
+    fun selectAll() {
+        items.clear()
+        items.addAll(pool.distinctBy(::key))
+    }
 }
 
 /** Tap does [onClick], or while picking adds or drops [item]; press and hold starts picking. */
@@ -350,7 +374,12 @@ fun SelectionBar(modifier: Modifier = Modifier) {
     Column(modifier.padding(horizontal = 8.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Elevated).padding(bottom = 6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(Selection::clear) { Icon(Icons.Rounded.Close, "Cancel") }
-            Text("${items.size} selected", style = MaterialTheme.typography.titleMedium)
+            Text("${items.size} selected", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+            val pool = Selection.pool
+            if (pool.isNotEmpty() && pool.first()::class == items.first()::class) {
+                if (!pool.all(Selection::has)) TextButton(Selection::selectAll) { Text("Select all", color = Accent) }
+                TextButton(Selection::clear) { Text("None", color = Sub) }
+            }
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
             @Composable
@@ -571,7 +600,21 @@ fun TrackRow(song: Song, onClick: () -> Unit, number: Int? = null, showArt: Bool
     val player = LocalPlayer.current
     val current = player?.song?.id == song.id
     val states by App.it.offline.states.collectAsStateWithLifecycle()
-    Row(
+    val swipe = rememberSwipeToDismissBoxState(confirmValueChange = {
+        if (it == SwipeToDismissBoxValue.StartToEnd) {
+            player?.enqueue(listOf(song))
+            toast("Added to queue")
+        }
+        false
+    })
+    SwipeToDismissBox(
+        swipe, {
+            if (swipe.dismissDirection == SwipeToDismissBoxValue.StartToEnd) Box(Modifier.fillMaxSize().padding(start = 20.dp), contentAlignment = Alignment.CenterStart) {
+                Icon(Icons.AutoMirrored.Rounded.QueueMusic, "Add to queue", tint = Accent)
+            }
+        },
+        enableDismissFromEndToStart = false,
+    ) { Row(
         Modifier.fillMaxWidth().pickable(song, onClick).padding(start = inset, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -589,7 +632,7 @@ fun TrackRow(song: Song, onClick: () -> Unit, number: Int? = null, showArt: Bool
         }
         if (Likes.isLiked(song)) LikedHeart(Modifier.size(16.dp), "Liked")
         SongMenu(song)
-    }
+    } }
 }
 
 @Composable
@@ -664,7 +707,31 @@ fun AddToPlaylist(songs: List<Song>, onDone: () -> Unit) {
     val lists = rememberLoad("playlists") { App.it.api.playlists() }
     val user = App.it.prefs.username
     var naming by remember { mutableStateOf(false) }
+    // The playlist picked, the songs of [songs] it lacks, and those it already has.
+    var dupes by remember { mutableStateOf<Triple<Playlist, List<Song>, List<Song>>?>(null) }
     if (naming) return NewPlaylist(songs) { onDone() }
+    suspend fun add(p: Playlist, these: List<Song>) {
+        runCatching { App.it.api.addToPlaylist(p.id, these.map { it.id }) }
+            .onSuccess { playlistsChanged(p.id); toast("Added to ${p.name}") }
+            .onFailure { toast("Couldn't add: ${networkReason(it)}") }
+        onDone()
+    }
+    dupes?.let { (p, fresh, there) ->
+        return AlertDialog(
+            onDismissRequest = { dupes = null },
+            containerColor = Elevated,
+            title = { Text("Already in ${p.name}") },
+            text = { Text(if (fresh.isEmpty()) "Every song is already in this playlist." else "${there.size} of ${songs.size} songs are already in this playlist.") },
+            confirmButton = {
+                if (fresh.isEmpty()) TextButton({ scope.launch { add(p, songs) } }) { Text("Add anyway", color = Accent) }
+                else TextButton({ scope.launch { add(p, fresh) } }) { Text("Skip duplicates", color = Accent) }
+            },
+            dismissButton = {
+                if (fresh.isEmpty()) TextButton({ dupes = null }) { Text("Cancel", color = Sub) }
+                else TextButton({ scope.launch { add(p, songs) } }) { Text("Add anyway", color = Sub) }
+            },
+        )
+    }
     AlertDialog(
         onDismissRequest = onDone,
         containerColor = Elevated,
@@ -685,8 +752,9 @@ fun AddToPlaylist(songs: List<Song>, onDone: () -> Unit) {
                     Row(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).clickable {
                             scope.launch {
-                                runCatching { App.it.api.addToPlaylist(p.id, songs.map { it.id }) }
-                                onDone()
+                                val have = runCatching { App.it.api.collection(Kind.Playlist, p.id).songs }.getOrNull()
+                                val (fresh, there) = if (have == null) songs to emptyList() else splitDuplicates(have, songs)
+                                if (there.isEmpty()) add(p, songs) else dupes = Triple(p, fresh, there)
                             }
                         }.padding(vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -716,7 +784,7 @@ fun NewPlaylist(songs: List<Song> = emptyList(), onDone: (String?) -> Unit) {
         busy = true
         scope.launch {
             runCatching { App.it.api.createPlaylist(name.trim(), songs.map { it.id }) }
-                .onSuccess { onDone(it) }
+                .onSuccess { playlistsChanged(); toast("Created ${name.trim()}"); onDone(it) }
                 .onFailure { error = it.message ?: "Couldn't create the playlist"; busy = false }
         }
     }
