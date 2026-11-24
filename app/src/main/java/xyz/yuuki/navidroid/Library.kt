@@ -54,11 +54,14 @@ fun libType(t: Tile): LibType? = when {
 fun visibleTypes(tiles: List<Tile>) = LibType.entries.filter { it != LibType.Radios && it != LibType.Mixes || tiles.any { t -> libType(t) == it } }
 
 /** Who made a row, as the library's subtitles spell it ("Playlist • owner", "Album • artist"). */
+/** "Radio • NaviBeat", "Mix • NaviBeat": what a generated row is, by whom. */
+fun generatedSubtitle(t: Tile) = "${if (libType(t) == LibType.Radios) "Radio" else "Mix"} • ${t.mix?.by}"
+
 fun creator(t: Tile, user: String) = if (t.kind == Kind.Liked) user else t.mix?.by ?: t.subtitle.substringAfter(" • ", "")
 
 /**
  * The rows the library shows, in order: Liked Songs first, then everything else, then (unfiltered only, when [showMixes])
- * the generated mixes and radios that are saved or downloaded. [hit] is the search box.
+ * every generated mix and radio, grouped at the end. [hit] is the search box.
  */
 fun libraryRows(
     tiles: List<Tile>, f: LibFilter, sort: LibSort, user: String, showMixes: Boolean,
@@ -84,5 +87,5 @@ fun libraryRows(
     val sorted = kept.sortedWith(compareBy<Tile> { it.kind != Kind.Liked }.then(order))
     if (f.type != null) return sorted
     fun generated(t: Tile) = libType(t).let { it == LibType.Radios || it == LibType.Mixes }
-    return sorted.filterNot(::generated) + if (showMixes) sorted.filter { generated(it) && (saved(it) || pinned(it)) } else emptyList()
+    return sorted.filterNot(::generated) + if (showMixes) sorted.filter(::generated) else emptyList()
 }

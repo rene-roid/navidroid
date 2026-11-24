@@ -8,7 +8,7 @@ class LibraryTest {
     private fun pl(id: String, name: String, owner: String, comment: String = "") = Playlist(id, name, comment, owner, 10, 0, null)
 
     // Tiles the way the screen builds them.
-    private fun playlist(p: Playlist) = p.tile().copy(subtitle = if (p.mix != null) "Mix • ${p.mix.by}" else "Playlist • ${p.owner}")
+    private fun playlist(p: Playlist) = p.tile().let { it.copy(subtitle = if (p.mix != null) generatedSubtitle(it) else "Playlist • ${p.owner}") }
     private val liked = likedTile(null)
     private val road = playlist(pl("road", "Road trip", "yuuki"))
     private val gym = playlist(pl("gym", "Gym", "ana"))
@@ -17,14 +17,18 @@ class LibraryTest {
     private val artistRadio = playlist(pl("r1", "x", "NaviBeat", nb("everything you have by MakenCat.", "artistradio:artistradio-1")))
     private val genreRadio = playlist(pl("g1", "x", "NaviBeat", nb("Rock, one of the genres you play most.", "genreradio:genreradio-1")))
     private val evening = playlist(pl("ev", "x", "NaviBeat", nb("your evening.", "timeofday:evening")))
-    private val onPhoneRadio = artistMixTile(Kind.ArtistRadio, "a9", "Ado", null).copy(subtitle = "Mix • Ado")
+    private val discovery = playlist(pl("dw", "x", "NaviBeat", nb("new to you.", "discovery:discovery-1")))
+    private val onPhoneRadio = artistMixTile(Kind.ArtistRadio, "a9", "Ado", null).let { it.copy(subtitle = generatedSubtitle(it)) }
     private val album = Album("al", "Zeta", "Ado", null, null, 2020, 10, 0).tile().copy(subtitle = "Album • Ado")
-    private val tiles = listOf(liked, road, gym, chill, daily, artistRadio, genreRadio, evening, onPhoneRadio, album)
+    private val tiles = listOf(liked, road, gym, chill, daily, artistRadio, genreRadio, evening, discovery, onPhoneRadio, album)
     private val saved = setOf("gym", "d1", "r1", "g1", "al", "a9")
     private val downloaded = setOf("chill", "d1", "ev")
 
     private fun rows(f: LibFilter = LibFilter(), sort: LibSort = LibSort.Default, showMixes: Boolean = true, hit: (Tile) -> Boolean = { true }) =
         libraryRows(tiles, f, sort, "yuuki", showMixes, { it.id in saved || it.kind == Kind.Liked }, { it.id in downloaded }, hit).map { it.id }
+
+    @Test
+    fun radiosSayRadio() = assertEquals(listOf("Radio • NaviBeat", "Mix • NaviBeat", "Radio • Ado"), listOf(artistRadio, daily, onPhoneRadio).map { it.subtitle })
 
     @Test
     fun classifiesTypes() {
@@ -35,9 +39,8 @@ class LibraryTest {
     }
 
     @Test
-    fun unfilteredKeepsMixesApartAndSavedOnly() {
-        // evening is downloaded, so it stays; nothing generated that is neither saved nor downloaded would.
-        assertEquals(listOf("liked", "gym", "al", "road", "chill", "d1", "r1", "g1", "a9", "ev"), rows())
+    fun unfilteredGroupsMixesAtTheEnd() {
+        assertEquals(listOf("liked", "gym", "al", "road", "chill", "d1", "r1", "g1", "a9", "ev", "dw"), rows())
         assertEquals(listOf("liked", "gym", "al", "road", "chill"), rows(showMixes = false))
     }
 
