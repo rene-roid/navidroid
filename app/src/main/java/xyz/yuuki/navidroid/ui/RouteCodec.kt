@@ -25,11 +25,12 @@ fun Route.encode(): String = when (this) {
     Route.Server -> "Server"
     Route.Storage -> "Storage"
     Route.About -> "About"
+    Route.Stats -> "Stats"
 }
 
 private val simple = listOf(
     Route.Home, Route.Search, Route.Library, Route.Settings, Route.Downloads, Route.Appearance, Route.HiddenPlaylists, Route.SongCache,
-    Route.ImageCache, Route.SavedInfo, Route.Playback, Route.DownloadSettings, Route.Server, Route.Storage, Route.About,
+    Route.ImageCache, Route.SavedInfo, Route.Playback, Route.DownloadSettings, Route.Server, Route.Storage, Route.About, Route.Stats,
 ).associateBy { it.encode() }
 
 /** Null for anything [encode] doesn't produce, such as a route a newer or older build had. */

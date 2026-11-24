@@ -10,7 +10,7 @@ import xyz.yuuki.navidroid.ui.encode
 class ShortcutsTest {
     private val routes = listOf(
         Route.Home, Route.Search, Route.Library, Route.Settings, Route.Downloads, Route.Appearance, Route.HiddenPlaylists, Route.SongCache,
-        Route.ImageCache, Route.SavedInfo, Route.Playback, Route.DownloadSettings, Route.Server, Route.Storage, Route.About,
+        Route.ImageCache, Route.SavedInfo, Route.Playback, Route.DownloadSettings, Route.Server, Route.Storage, Route.About, Route.Stats,
         Route.Open(Kind.Playlist, "pl-1"), Route.Open(Kind.Album, "a:b:c"), Route.Open(Kind.Artist, "ar-9"), Route.Open(Kind.Liked, "liked"),
         Route.Open(Kind.Genre, "Bossa Nova"), Route.Open(Kind.ArtistMix, "7"), Route.Open(Kind.ArtistRadio, "7"),
         Route.More("top-mixes"), Route.More("a:b"), Route.Jam("http://10.0.2.18:8765/j/ABC123"), Route.Open(Kind.Decade, "1990"),
