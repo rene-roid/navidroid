@@ -1,6 +1,19 @@
 package xyz.yuuki.navidroid.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.rounded.DragHandle
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.zIndex
+import xyz.yuuki.navidroid.EditDraft
+import xyz.yuuki.navidroid.networkReason
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -945,11 +958,35 @@ fun CollectionScreen(kind: Kind, id: String) {
 
     val playingThis = player?.isPlaying == true && player.from == c?.title
     val artistMix = kind == Kind.ArtistMix || kind == Kind.ArtistRadio
+    DisposableEffect(c) {
+        Selection.pool = c?.songs.orEmpty()
+        onDispose { Selection.pool = emptyList() }
+    }
+
+    // Edit mode: the rows keep their original index as identity, so a song repeated in a playlist still has distinct keys.
+    val edit = remember(id) { PlaylistEdit() }
+    val scope = rememberCoroutineScope()
+    val canEdit = c?.editableBy(App.it.prefs.username) == true
+    var dragKey by remember { mutableStateOf<String?>(null) }
+    var dragDy by remember { mutableFloatStateOf(0f) }
+    fun drag(dy: Float) {
+        val key = dragKey ?: return
+        dragDy += dy
+        val vis = list.layoutInfo.visibleItemsInfo
+        val me = vis.find { it.key == key } ?: return
+        val mid = me.offset + me.size / 2 + dragDy
+        vis.find { it.key != key && (it.key as? String)?.startsWith("r") == true && mid >= it.offset && mid <= it.offset + it.size }?.let { over ->
+            edit.rows.add(edit.rows.indexOfFirst { "r${it.first}" == over.key }, edit.rows.removeAt(edit.rows.indexOfFirst { "r${it.first}" == key }))
+            dragDy -= over.offset - me.offset
+        }
+        val edge = 160f
+        if (mid < edge || mid > list.layoutInfo.viewportEndOffset - edge) scope.launch { dragDy += list.scrollBy(if (mid < edge) -24f else 24f) }
+    }
 
     val backdrop = rememberGraphicsLayer()
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize().underBar(backdrop), state = list) {
-            item("header") { BoxWithConstraints {
+            if (edit.on && c != null) item("edit") { EditForm(edit, c) } else item("header") { BoxWithConstraints {
                 val mix = c?.mix
                 val size = if (!wide) 240.dp else if (isTablet()) 200.dp else 128.dp
                 // Side by side only when the title gets real room beside the header, which is 1.4 covers wide: 420 dp for a phone's cover.
@@ -999,9 +1036,10 @@ fun CollectionScreen(kind: Kind, id: String) {
                     CollectionInfo(kind, c)
                 }
             } }
-            item("actions") {
+            if (!edit.on) item("actions") {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (c != null) PinButton(c)
+                    if (canEdit) IconButton({ Selection.clear(); edit.start(c!!) }) { Icon(Icons.Rounded.Edit, "Edit playlist", Modifier.size(26.dp), tint = Sub) }
                     if (c != null && kind == Kind.Album) HeartButton(Likes.isLiked(c.id, c.starred)) { Likes.toggle(c.id, c.starred, "albumId") }
                     if (c != null && kind == Kind.Playlist) HeartButton(c.id in Likes.playlists) { Likes.togglePlaylist(c.id) }
                     if (artistMix && c?.by != null) HeartButton(Likes.hasMix(kind, id)) { Likes.toggleMix(xyz.yuuki.navidroid.artistMixTile(kind, id, c.by, c.coverArt)) }
@@ -1020,13 +1058,132 @@ fun CollectionScreen(kind: Kind, id: String) {
                 }
             }
             if (c == null) item("loading") { if (load.error != null) ErrorText(load.error) else Loading() }
-            if (c != null) itemsIndexed(c.songs, key = { i, s -> "$i:${s.id}" }) { i, s ->
+            if (edit.on) items(edit.rows, key = { "r${it.first}" }) { (n, s) ->
+                val key = "r$n"
+                val dragging = dragKey == key
+                Row(
+                    Modifier.fillMaxWidth().then(
+                        if (dragging) Modifier.zIndex(1f).graphicsLayer { translationY = dragDy }.background(Elevated) else Modifier.animateItem(),
+                    ).padding(start = 16.dp, top = 6.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Cover(s.coverArt, 120, Modifier.size(48.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(s.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(s.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    IconButton({ edit.rows.removeAll { it.first == n } }) { Icon(Icons.Rounded.Close, "Remove", tint = Sub) }
+                    Icon(
+                        Icons.Rounded.DragHandle, "Hold and drag to reorder",
+                        Modifier.pointerInput(key) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { dragKey = key; dragDy = 0f },
+                                onDrag = { ch, d -> ch.consume(); drag(d.y) },
+                                onDragEnd = { dragKey = null; dragDy = 0f },
+                                onDragCancel = { dragKey = null; dragDy = 0f },
+                            )
+                        }.padding(horizontal = 12.dp, vertical = 8.dp).size(28.dp),
+                        tint = Sub,
+                    )
+                }
+            } else if (c != null) itemsIndexed(c.songs, key = { i, s -> "$i:${s.id}" }) { i, s ->
                 TrackRow(s, { player?.play(c.songs, i, from = c.title) }, number = if (kind == Kind.Album) s.track.takeIf { it > 0 } ?: (i + 1) else null, showArt = kind != Kind.Album)
             }
             item("end") { BottomSpacer() }
         }
         TopBar(c?.title ?: "", color, collapsed, backdrop)
     }
+}
+
+private class PlaylistEdit {
+    var on by mutableStateOf(false)
+    var name by mutableStateOf("")
+    var comment by mutableStateOf("")
+    var isPublic by mutableStateOf(false)
+    var busy by mutableStateOf(false)
+    var asking by mutableStateOf(false)
+    val rows = mutableStateListOf<Pair<Int, Song>>()
+
+    fun start(c: Collection) {
+        name = c.title
+        comment = c.description.orEmpty()
+        isPublic = c.isPublic
+        rows.clear()
+        rows += c.songs.mapIndexed { i, s -> i to s }
+        on = true
+    }
+
+    fun draft() = EditDraft(name, comment, isPublic, rows.map { it.second })
+}
+
+/** Name, description, visibility, save and delete for a playlist being edited; the songs below it carry the drag handles. */
+@Composable
+private fun EditForm(e: PlaylistEdit, c: Collection) {
+    val nav = LocalNav.current
+    val scope = rememberCoroutineScope()
+    fun fail(what: String, t: Throwable) {
+        e.busy = false
+        toast("Couldn't $what: ${networkReason(t)}")
+    }
+    fun save() {
+        val d = e.draft()
+        if (d.name.isBlank() || e.busy) return
+        e.busy = true
+        scope.launch {
+            runCatching { api.editPlaylist(c.id, c.songs, d) }
+                .onSuccess { playlistsChanged(c.id); e.busy = false; e.on = false; toast("Saved") }
+                .onFailure { fail("save", it) }
+        }
+    }
+    Column(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Edit playlist", style = MaterialTheme.typography.headlineSmall)
+        OutlinedTextField(
+            e.name, { e.name = it }, Modifier.fillMaxWidth(), singleLine = true, shape = fieldShape, colors = fieldColors, placeholder = { Text("Name") }, isError = e.name.isBlank(),
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+        )
+        OutlinedTextField(
+            e.comment, { e.comment = it }, Modifier.fillMaxWidth(), maxLines = 4, shape = fieldShape, colors = fieldColors, placeholder = { Text("Description") },
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Public")
+                Text("Anyone on this server can see and play it", style = MaterialTheme.typography.bodySmall)
+            }
+            Switch(e.isPublic, { e.isPublic = it })
+        }
+        Text("Hold a handle to drag a song to a new place.", style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            TextButton({ e.asking = true }, enabled = !e.busy) { Text("Delete playlist", color = MaterialTheme.colorScheme.error) }
+            Spacer(Modifier.weight(1f))
+            TextButton({ e.on = false }, enabled = !e.busy) { Text("Cancel", color = Sub) }
+            TextButton(::save, enabled = e.name.isNotBlank() && !e.busy) { Text("Save", color = Accent) }
+        }
+    }
+    if (e.asking) AlertDialog(
+        onDismissRequest = { e.asking = false },
+        containerColor = Elevated,
+        title = { Text("Delete ${c.title}?") },
+        text = { Text("The playlist is removed for good. Its songs stay in your library.") },
+        confirmButton = {
+            TextButton({
+                e.asking = false
+                e.busy = true
+                scope.launch {
+                    runCatching { api.deletePlaylist(c.id) }.onSuccess {
+                        if (c.id in Likes.playlists) Likes.togglePlaylist(c.id)
+                        offline.unpin(c.kind, c.id)
+                        playlistsChanged(c.id)
+                        e.busy = false
+                        nav.back()
+                        toast("Deleted ${c.title}")
+                    }.onFailure { fail("delete", it) }
+                }
+            }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+        },
+        dismissButton = { TextButton({ e.asking = false }) { Text("Cancel", color = Sub) } },
+    )
 }
 
 @Composable
