@@ -57,6 +57,7 @@ data class Song(
     val genre: String? = null,
     /** Times played by this user; the server leaves it out for songs never played. */
     val playCount: Int = 0,
+    val gain: ReplayGain? = null,
 ) {
     /** Same field names as the Subsonic response, so [from] reads both API and saved JSON. */
     fun toJson(): JSONObject = JSONObject()
@@ -65,6 +66,7 @@ data class Song(
         .put("duration", duration).put("track", track).put("year", year)
         .put("suffix", suffix).put("bitRate", bitRate).put("genre", genre).put("playCount", playCount)
         .put("artists", JSONArray(artists.map { JSONObject().put("id", it.first).put("name", it.second) }))
+        .put("replayGain", gain?.toJson())
         .apply { if (starred) put("starred", "1") }
 
     companion object {
@@ -85,8 +87,36 @@ data class Song(
             artists = o.optJSONArray("artists").objects().mapNotNull { a -> a.s("id")?.let { it to (a.s("name") ?: "") } },
             genre = o.s("genre"),
             playCount = o.optInt("playCount"),
+            gain = o.optJSONObject("replayGain")?.let(ReplayGain::from),
         )
     }
+}
+
+/** How loud the server measured a song and its album: gains in dB, peaks as a share of full scale. */
+data class ReplayGain(val trackGain: Double?, val albumGain: Double?, val trackPeak: Double?, val albumPeak: Double?) {
+    fun toJson(): JSONObject = JSONObject().put("trackGain", trackGain).put("albumGain", albumGain).put("trackPeak", trackPeak).put("albumPeak", albumPeak)
+
+    companion object {
+        /** Null for the empty object a server sends for files it has no measurements of. */
+        fun from(o: JSONObject): ReplayGain? {
+            fun d(k: String) = o.optDouble(k).takeIf { !it.isNaN() }
+            return ReplayGain(d("trackGain"), d("albumGain"), d("trackPeak"), d("albumPeak")).takeIf { it.trackGain != null || it.albumGain != null }
+        }
+    }
+}
+
+enum class GainMode { Off, Track, Album }
+
+/**
+ * The player volume that evens [g] out: its gain as a factor, kept under where its peak would clip.
+ * ponytail: the player's volume tops out at 1, so songs the server would turn up stay as they are; turning those up needs a gain audio processor.
+ */
+fun replayVolume(g: ReplayGain?, mode: GainMode): Float {
+    if (g == null || mode == GainMode.Off) return 1f
+    val album = mode == GainMode.Album
+    val db = (if (album) g.albumGain ?: g.trackGain else g.trackGain ?: g.albumGain) ?: return 1f
+    val peak = (if (album) g.albumPeak ?: g.trackPeak else g.trackPeak ?: g.albumPeak)?.takeIf { it > 0 } ?: 1.0
+    return minOf(Math.pow(10.0, db / 20), 1 / peak, 1.0).toFloat()
 }
 
 data class Album(
@@ -397,6 +427,9 @@ class Prefs(account: String, open: (String) -> SharedPreferences) {
     var compactLists by bool("compactLists", false, device)
     var nowPlayingStyle by int("nowPlayingStyle", 0, device)
     var largeControls by bool("largeControls", false, device)
+
+    // Player: ReplayGain, as a [GainMode] ordinal
+    var replayGain by int("replayGain", 0, device)
 
     val loggedIn get() = token != null && endpoints.isNotEmpty()
 
@@ -890,6 +923,8 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
             .optJSONObject("searchResult3") ?: JSONObject()
         return SearchResult(r.list("artist").map(Artist::from), r.list("album").map(Album::from), r.list("song").map(Song::from))
     }
+
+    suspend fun song(id: String) = Song.from(call("getSong", "id" to id).getJSONObject("song"))
 
     suspend fun genres() = once("genres") {
         call("getGenres").getJSONObject("genres").list("genre")
