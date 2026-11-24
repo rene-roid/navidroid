@@ -54,6 +54,7 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -133,6 +134,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.exoplayer.offline.Download
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -161,7 +163,14 @@ import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
+import xyz.yuuki.navidroid.Album
 import xyz.yuuki.navidroid.App
+import xyz.yuuki.navidroid.Section
+import xyz.yuuki.navidroid.becauseShelf
+import xyz.yuuki.navidroid.jumpBackShelf
+import xyz.yuuki.navidroid.shuffledRadio
+import xyz.yuuki.navidroid.throwbackYears
+import xyz.yuuki.navidroid.unplayedShelf
 import xyz.yuuki.navidroid.Collection
 import xyz.yuuki.navidroid.Home
 import xyz.yuuki.navidroid.Kind
@@ -209,6 +218,24 @@ suspend fun loadHome(): Home = coroutineScope {
     buildHome(displayName(), Calendar.getInstance().get(Calendar.HOUR_OF_DAY), playlists.await(), recent.await(), newest.await(), frequent.await(), liked.await())
 }
 
+/** The home shelves that need extra calls; loaded apart from [loadHome] so Home paints first. A shelf that fails or has nothing is left out. */
+suspend fun loadShelves(): List<Section> = coroutineScope {
+    val recent = api.albumList("recent", 40)
+    fun shelf(key: String, title: String, albums: List<Album>) = Section(key, title, albums.map { it.tile() })
+    val because = async {
+        val top = recent.firstOrNull() ?: return@async null
+        val similar = top.artistId?.let { api.similarArtists(it, 6) }.orEmpty()
+        shelf("because", "Because you listened to ${top.name}", becauseShelf(similar.map { a -> async { api.artistAlbums(a.id) } }.awaitAll(), recent))
+    }
+    val unplayed = async { shelf("unplayed", "Albums you haven't played yet", unplayedShelf(api.albumList("random", 60))) }
+    val throwback = async {
+        throwbackYears(Calendar.getInstance().get(Calendar.YEAR)).map { (y, title) -> async { shelf("throwback", title, api.albumsByYear(y, y, 20)) } }
+            .awaitAll().firstOrNull { it.tiles.isNotEmpty() }
+    }
+    val jump = async { shelf("jump-back", "Jump back in", jumpBackShelf(api.albumList("frequent", 100), recent)) }
+    listOf(because, unplayed, throwback, jump).mapNotNull { runCatching { it.await() }.getOrNull() }.filter { it.tiles.isNotEmpty() }
+}
+
 /** Pinned collections as tiles, from their saved snapshots, for when the server is unreachable. */
 fun pinnedTiles(pins: List<Pin>) = pins.mapNotNull { p ->
     offline.snapshot(p.kind, p.id)?.let { Tile(it.kind, it.id, it.title, "${it.songs.size} songs", it.coverArt, it.mix) }
@@ -223,9 +250,11 @@ fun HomeScreen() {
     val home = rememberLoad("home") { loadHome() }
     val online by api.online.collectAsStateWithLifecycle()
     val pins by offline.pins.collectAsStateWithLifecycle()
+    val shelves = rememberLoad("home-shelves") { loadShelves() }
     val refresh = {
         api.networkChanged(true)
         home.refresh()
+        shelves.refresh()
     }
     val here = LocalPlayer.current?.song?.id
     // Polled only while Home is on screen; a server that won't say just shows nothing.
@@ -259,6 +288,12 @@ fun HomeScreen() {
                 }
                 items(h.sections.map { it.copy(tiles = it.tiles.filter(Hidden::shows)) }.filter { it.tiles.isNotEmpty() }, key = { it.key }) { s ->
                     SectionHeader(s.title) { nav.go(Route.More(s.key)) }
+                    LazyRow(contentPadding = PaddingValues(horizontal = 10.dp)) {
+                        items(s.tiles, key = { "${it.kind}:${it.id}" }) { Card(it) }
+                    }
+                }
+                if (online) items(shelves.data.orEmpty(), key = { "shelf:${it.key}" }) { s ->
+                    SectionHeader(s.title)
                     LazyRow(contentPadding = PaddingValues(horizontal = 10.dp)) {
                         items(s.tiles, key = { "${it.kind}:${it.id}" }) { Card(it) }
                     }
@@ -376,6 +411,7 @@ fun SearchScreen() {
         searching = false
     }
     val genres = rememberLoad("genres") { api.genres() }
+    val decades = rememberLoad("decades") { api.decades() }
     LaunchedEffect(Unit) { if (discover == null) loadDiscover() }
     var recents by remember { mutableStateOf(App.it.prefs.recentSearches) }
     fun save(v: List<Recent>) {
@@ -472,6 +508,15 @@ fun SearchScreen() {
                 }
             }
             item(span = { wide }) { SearchHeader("Browse all") }
+            val decades = decades.data.orEmpty()
+            if (decades.isNotEmpty()) item(span = { wide }) {
+                Column {
+                    Text("Decades", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(decades, key = { it.first }) { (start, art) -> BrowseCard("${start}s", art.ifEmpty { null }, Modifier.width(160.dp)) { nav.go(Route.Open(Kind.Decade, "$start")) } }
+                    }
+                }
+            }
             items(genres.data.orEmpty().take(60), key = { it.name }) { GenreCard(it) { nav.go(Route.Open(Kind.Genre, it.name)) } }
         } else {
             val r = result
@@ -591,8 +636,13 @@ fun rankHits(q: String, vararg kinds: List<Any>): List<Any> {
 @Composable
 private fun GenreCard(g: xyz.yuuki.navidroid.Genre, onClick: () -> Unit) {
     val art by androidx.compose.runtime.produceState<String?>(null, g.name) { value = runCatching { api.genreCover(g.name) }.getOrNull() }
-    val bg = rememberGenreTint(g.name, art)
-    Box(Modifier.height(100.dp).clip(RoundedCornerShape(8.dp)).background(bg).clickable(onClick = onClick)) {
+    BrowseCard(g.name, art, onClick = onClick)
+}
+
+@Composable
+private fun BrowseCard(name: String, art: String?, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val bg = rememberGenreTint(name, art)
+    Box(modifier.height(100.dp).clip(RoundedCornerShape(8.dp)).background(bg).clickable(onClick = onClick)) {
         // The cover again, blurred behind a wash that is solid under the title and thins out towards the art.
         if (art != null) Cover(art, 300, Modifier.fillMaxSize().scale(1.3f).blur(10.dp), RoundedCornerShape(0.dp))
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(bg.copy(alpha = 0.92f), bg.copy(alpha = 0.6f), Color.Transparent))))
@@ -601,7 +651,7 @@ private fun GenreCard(g: xyz.yuuki.navidroid.Genre, onClick: () -> Unit) {
             Modifier.align(Alignment.BottomEnd).offset(x = 8.dp, y = 0.dp).size(78.dp).rotate(25f).shadow(10.dp, RoundedCornerShape(4.dp)),
         )
         Text(
-            g.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(start = 12.dp, top = 12.dp, end = 56.dp),
         )
     }
@@ -743,7 +793,7 @@ fun LibraryScreen(column: Boolean = false) {
             Kind.Album -> t.id in savedAlbumIds
             Kind.Artist -> t.id in savedArtistIds
             Kind.Liked -> true
-            Kind.Genre -> false
+            Kind.Genre, Kind.Decade -> false
             Kind.ArtistMix, Kind.ArtistRadio -> Likes.hasMix(t.kind, t.id)
         }
         // Every album and artist on the server only under their own type; everywhere else just the saved ones.
@@ -883,7 +933,7 @@ fun CollectionScreen(kind: Kind, id: String) {
     val c = load.data
     LaunchedEffect(c) { c?.let { App.it.offline.warm(it.songs) } }
     val color = c?.mix?.let { Color(it.color) }
-        ?: if (kind == Kind.Liked) Color(0xFF5038A0) else if (kind == Kind.Genre) rememberCoverColor(c?.coverArt, Color(xyz.yuuki.navidroid.paletteColor(id))) else rememberCoverColor(c?.coverArt)
+        ?: if (kind == Kind.Liked) Color(0xFF5038A0) else if (kind == Kind.Genre || kind == Kind.Decade) rememberCoverColor(c?.coverArt, Color(xyz.yuuki.navidroid.paletteColor(id))) else rememberCoverColor(c?.coverArt)
     val list = rememberLazyListState()
     val collapsed by remember { derivedStateOf { list.firstVisibleItemIndex > 0 || list.firstVisibleItemScrollOffset > 600 } }
     val wide = isWide()
@@ -955,6 +1005,9 @@ fun CollectionScreen(kind: Kind, id: String) {
                     if (c != null && kind == Kind.Playlist) HeartButton(c.id in Likes.playlists) { Likes.togglePlaylist(c.id) }
                     if (artistMix && c?.by != null) HeartButton(Likes.hasMix(kind, id)) { Likes.toggleMix(xyz.yuuki.navidroid.artistMixTile(kind, id, c.by, c.coverArt)) }
                     Spacer(Modifier.weight(1f))
+                    if (c != null && (kind == Kind.Genre || kind == Kind.Decade)) IconButton({ player?.play(shuffledRadio(c.songs, App.it.prefs.radioFresh), from = "${c.title} Radio") }) {
+                        Icon(Icons.Rounded.Radio, "Radio", Modifier.size(28.dp), tint = Sub)
+                    }
                     IconButton({ c?.let { player?.play(it.songs, shuffled = true, from = it.title) } }) {
                         Icon(Icons.Rounded.Shuffle, "Shuffle play", Modifier.size(28.dp), tint = Sub)
                     }
@@ -1111,6 +1164,7 @@ fun ArtistScreen(id: String) {
     val wide = isWide()
     // Songs they share the credit on, wherever they came out, newest first.
     val collabs = remember(a) { a?.songs.orEmpty().filter { it.withOthers(id) }.sortedByDescending { it.year } }
+    val similar = rememberLoad("similar:$id") { api.similarArtists(id) }
     var allTop by rememberSaveable { mutableStateOf(false) }
     var allCollabs by rememberSaveable { mutableStateOf(false) }
 
@@ -1174,6 +1228,12 @@ fun ArtistScreen(id: String) {
                         items(releases, key = { it.id }) { r ->
                             Card(r.tile().copy(subtitle = listOfNotNull(r.year.takeIf { it > 0 }?.toString(), count(r.songCount, "song")).joinToString(" • ")))
                         }
+                    }
+                }
+                if (!similar.data.isNullOrEmpty()) item("similar") {
+                    SectionHeader("Fans also like")
+                    LazyRow(contentPadding = PaddingValues(horizontal = 10.dp)) {
+                        items(similar.data.orEmpty(), key = { it.id }) { Card(it.tile()) }
                     }
                 }
                 if (collabs.isNotEmpty()) {
