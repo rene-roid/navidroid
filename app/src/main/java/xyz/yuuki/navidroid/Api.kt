@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -352,14 +353,58 @@ fun normalizeEndpoint(input: String): String {
     return u.toHttpUrlOrNull()?.toString()?.trimEnd('/') ?: u
 }
 
+/** What answers at an address, asked without credentials. */
+sealed interface Probe {
+    data class Found(val type: String, val version: String, val openSubsonic: Boolean) : Probe {
+        /** "Navidrome 0.64.2". */
+        val name get() = "${type.replaceFirstChar { it.uppercase() }} $version".trim()
+    }
+    data object NotSubsonic : Probe
+    data class Unreachable(val reason: String) : Probe
+}
+
+/** Reads the answer to a ping sent without credentials: the server refuses it, and says what it is while doing so. */
+fun parseProbe(body: String): Probe {
+    val r = runCatching { JSONObject(body).optJSONObject("subsonic-response") }.getOrNull()
+        // Servers too old to know f=json answer in XML.
+        ?: return if ("<subsonic-response" in body) Probe.Found("subsonic", "", false) else Probe.NotSubsonic
+    // Navidrome adds its build after the version: "0.64.2 (10114574)".
+    return Probe.Found(r.s("type") ?: "subsonic", r.s("serverVersion")?.substringBefore(' ') ?: "", r.optBoolean("openSubsonic"))
+}
+
+/** Why a request never got an answer, in words for the person typing the address. */
+fun networkReason(e: Throwable) = when (e) {
+    is java.net.UnknownHostException -> "address not found (DNS)"
+    is javax.net.ssl.SSLException -> "the secure connection failed (TLS)"
+    // Before InterruptedIOException: a socket timeout is one.
+    is java.net.SocketTimeoutException -> "timed out"
+    is java.net.ConnectException -> "connection refused"
+    is java.net.UnknownServiceException -> "plain http is blocked, use https"
+    is java.io.InterruptedIOException -> "timed out"
+    else -> e.message ?: "network error"
+}
+
+/**
+ * Probes what was typed and returns the address that answered. Without a scheme it is tried over https and then
+ * http, as a server on the home network rarely has a certificate.
+ */
+fun probeAddress(input: String): Pair<String, Probe> {
+    val ep = normalizeEndpoint(input)
+    val first = Api.probe(ep)
+    if (first is Probe.Found || "://" in input) return ep to first
+    val plain = "http" + ep.removePrefix("https")
+    val second = Api.probe(plain)
+    return if (second is Probe.Found) plain to second else ep to first
+}
+
 fun md5(s: String): String = MessageDigest.getInstance("MD5").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
 
 // ---- client ---------------------------------------------------------------------------------
 
 /**
  * Subsonic client over several endpoints of the same server (LAN address, public domain, ...).
- * All endpoints are pinged in parallel and the first to answer becomes [active]; any network
- * failure re-runs that race, so moving between Wi-Fi and mobile data just picks the next one.
+ * All endpoints are pinged in parallel and the first to answer becomes [active], the first of the list
+ * winning a close call; any network failure re-runs that race, so moving between Wi-Fi and mobile data just picks the next one.
  */
 class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
     val http: OkHttpClient = OkHttpClient.Builder()
@@ -437,11 +482,17 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
         val eps = prefs.endpoints
         if (eps.isEmpty()) return null
         val winner = CompletableDeferred<String?>()
+        // The first address is the preferred one: a faster other gives it a moment to answer too.
+        val preferred = CompletableDeferred<Unit>()
         var left = eps.size
         for (ep in eps) scope.launch(Dispatchers.IO) {
             val ms = ping(ep)
             latency.update { it + (ep to ms) }
-            if (ms != null) winner.complete(ep)
+            if (ms != null) {
+                if (ep != eps[0]) withTimeoutOrNull(400) { preferred.await() }
+                winner.complete(ep)
+            }
+            if (ep == eps[0]) preferred.complete(Unit)
             if (synchronized(winner) { --left } == 0) winner.complete(null)
         }
         val w = winner.await()
@@ -797,6 +848,20 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
     }
 
     companion object {
+        private val probeHttp by lazy { OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS).callTimeout(5, TimeUnit.SECONDS).build() }
+
+        /** Asks [endpoint] what it is, without credentials. */
+        fun probe(endpoint: String): Probe {
+            val url = "$endpoint/rest/ping".toHttpUrlOrNull()?.newBuilder()
+                ?.addQueryParameter("v", "1.16.1")?.addQueryParameter("c", "navidroid")?.addQueryParameter("f", "json")?.build()
+                ?: return Probe.Unreachable("not a valid address")
+            return try {
+                probeHttp.newCall(Request.Builder().url(url).build()).execute().use { parseProbe(it.body!!.string()) }
+            } catch (e: IOException) {
+                Probe.Unreachable(networkReason(e))
+            }
+        }
+
         /** Validates credentials against [endpoint] without touching the saved session. */
         fun login(endpoint: String, user: String, password: String): Pair<String, String> {
             val salt = java.util.UUID.randomUUID().toString().replace("-", "").take(12)
