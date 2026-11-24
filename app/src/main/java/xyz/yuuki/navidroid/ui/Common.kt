@@ -179,6 +179,14 @@ class Nav {
     }
 
     fun open(t: Tile) = go(Route.Open(t.kind, t.id))
+
+    companion object {
+        /** The stack as strings, so it comes back after the process was killed. */
+        val Saver = androidx.compose.runtime.saveable.listSaver<Nav, String>(
+            save = { nav -> nav.stack.map(Route::encode) },
+            restore = { saved -> Nav().apply { saved.mapNotNull(::decodeRoute).takeIf { it.isNotEmpty() }?.let { stack.clear(); stack.addAll(it) } } },
+        )
+    }
 }
 
 val LocalNav = staticCompositionLocalOf<Nav> { error("no nav") }

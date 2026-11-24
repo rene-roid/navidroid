@@ -367,9 +367,13 @@ fun Loading() = Box(Modifier.fillMaxWidth().padding(48.dp), contentAlignment = A
 
 @Composable
 fun MoreScreen(key: String) {
-    val section = cachedUi<Home>("home")?.sections?.firstOrNull { it.key == key }
+    // Opened from Home the cache is full; after the app was killed and restored on this page it isn't, so load it.
+    val load = if (cachedUi<Home>("home") == null) rememberLoad("home") { loadHome() } else null
+    val home = cachedUi<Home>("home") ?: load?.data
+    val section = home?.sections?.firstOrNull { it.key == key }
     LazyVerticalGrid(GridCells.Adaptive(160.dp), Modifier.fillMaxSize(), contentPadding = PaddingValues(10.dp)) {
         item(span = { GridItemSpan(maxLineSpan) }) { BackTitle(section?.title ?: "") }
+        if (home == null) item(span = { GridItemSpan(maxLineSpan) }) { if (load?.error != null) ErrorText(load.error) else Loading() }
         items(section?.tiles.orEmpty().filter(Hidden::shows), key = { "${it.kind}:${it.id}" }) { Card(it, width = 200.dp) }
         item(span = { GridItemSpan(maxLineSpan) }) { BottomSpacer() }
     }
@@ -964,6 +968,7 @@ fun CollectionScreen(kind: Kind, id: String) {
     LaunchedEffect(c) { c?.coverArt?.takeIf { c.mix == null }?.let { nav.arts[Route.Open(kind, id)] = it } }
 
     val playingThis = player?.isPlaying == true && player.from == c?.title
+    LaunchedEffect(playingThis) { if (playingThis && c != null) xyz.yuuki.navidroid.recordRecent(c) }
     val artistMix = kind == Kind.ArtistMix || kind == Kind.ArtistRadio
     DisposableEffect(c) {
         Selection.pool = c?.songs.orEmpty()

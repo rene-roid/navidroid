@@ -20,11 +20,16 @@ android {
     flavorDimensions += "target"
     productFlavors {
         // What GitHub releases ship.
-        create("github") { dimension = "target" }
+        create("github") {
+            dimension = "target"
+            // Static shortcuts need the package spelled out in res/xml, where no manifest placeholder reaches.
+            resValue("string", "app_package", "xyz.yuuki.navidroid")
+        }
         // The Xiaomi 17 Pro's rear screen only plays along with a fixed list of music-app packages, so this build borrows one.
         create("xiaomi") {
             dimension = "target"
             applicationId = "com.netease.cloudmusic"
+            resValue("string", "app_package", "com.netease.cloudmusic")
         }
     }
 
@@ -42,6 +47,7 @@ android {
     }
     buildFeatures {
         compose = true
+        resValues = true
     }
     lint {
         // Media3's offline/cache APIs are all marked unstable; we use them deliberately.

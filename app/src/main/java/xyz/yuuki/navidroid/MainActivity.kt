@@ -139,7 +139,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge(SystemBarStyle.dark(AndroidColor.TRANSPARENT), SystemBarStyle.dark(AndroidColor.TRANSPARENT))
         migrateIcon(this)
         loggedIn = App.it.prefs.loggedIn
-        if (savedInstanceState == null) jamLink = intent?.dataString?.let(::jamBase)
+        if (savedInstanceState == null) {
+            jamLink = intent?.dataString?.let(::jamBase)
+            // A restored activity would run the shortcut that started it again.
+            intent.shortcut()?.let { PendingShortcut.action = it }
+        }
         if (loggedIn) connect()
         // The widgets still show the account the last process ran as.
         if (intent.getBooleanExtra(EXTRA_SWITCHED, false)) App.it.scope.launch { NowPlayingWidget().updateAll(App.it) }
@@ -162,6 +166,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         intent.dataString?.let(::jamBase)?.let { jamLink = it }
+        intent.shortcut()?.let { PendingShortcut.action = it }
     }
 
     override fun onStart() {
@@ -208,8 +213,9 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun Shell(onLogout: () -> Unit, jamLink: String?, onJamOpened: () -> Unit) {
-    val nav = remember { Nav() }
+    val nav = rememberSaveable(saver = Nav.Saver) { Nav() }
     val player = LocalPlayer.current
+    ShortcutHandler(nav, player)
     var nowPlaying by rememberSaveable { mutableStateOf(false) }
     var addingAccount by rememberSaveable { mutableStateOf(false) }
     val wide = isWide()
