@@ -134,6 +134,11 @@ sealed interface Route {
     data object SongCache : Route
     data object ImageCache : Route
     data object SavedInfo : Route
+    data object Playback : Route
+    data object DownloadSettings : Route
+    data object Server : Route
+    data object Storage : Route
+    data object About : Route
     data class Open(val kind: Kind, val id: String) : Route
     data class More(val section: String) : Route
 }
@@ -242,10 +247,25 @@ object Likes {
 
     fun hasMix(kind: Kind, id: String) = mixes.any { it.kind == kind && it.id == id }
 
+    fun forget() {
+        overrides.clear()
+        playlists = emptySet()
+        mixes = emptyList()
+        App.it.prefs.savedPlaylists = playlists
+        App.it.prefs.savedMixes = mixes
+    }
+
     fun toggleMix(t: Tile) {
         mixes = if (hasMix(t.kind, t.id)) mixes.filterNot { it.kind == t.kind && it.id == t.id } else mixes + t
         App.it.prefs.savedMixes = mixes
     }
+}
+
+/** Logging out: nothing of this account's may show up under the next one. */
+fun forgetAccount() {
+    uiCache.clear()
+    Likes.forget()
+    Hidden.set(Hidden.playlists, false)
 }
 
 @Composable
