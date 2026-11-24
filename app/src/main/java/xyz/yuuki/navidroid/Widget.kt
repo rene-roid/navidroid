@@ -108,7 +108,6 @@ import xyz.yuuki.navidroid.ui.OnAccent
 import xyz.yuuki.navidroid.ui.Sub
 import xyz.yuuki.navidroid.ui.Surface
 import xyz.yuuki.navidroid.ui.coverRequest
-import java.io.File
 import androidx.media3.session.R as Media3R
 
 /** What the widgets show, kept on disk so they can still draw it once the process is gone. */
@@ -137,7 +136,7 @@ const val EXTRA_PLAY = "play"
 private class Shown(val np: NowPlaying, val cover: Bitmap?)
 
 private val shown = MutableStateFlow<Shown?>(null)
-private val Context.snapshotFile get() = File(filesDir, "widget.json")
+private val snapshotFile get() = App.it.dir("widget.json")
 
 /** Keeps the widgets on the current song: updates them when the song or the play button changes, never for position. */
 class WidgetFeed(private val app: App, private val player: Player, private val scope: CoroutineScope) : Player.Listener {
@@ -155,19 +154,19 @@ class WidgetFeed(private val app: App, private val player: Player, private val s
             val next = if (old?.np?.id == song.id) Shown(old.np.copy(from = from, isPlaying = playing), old.cover) else {
                 val cover = song.coverArt?.let { cover(it) }
                 val color = cover?.let { Palette.from(it).generate().getDominantColor(0) } ?: 0
-                Shown(NowPlaying(song.id, song.title, song.artist, from, cover?.let { app.coverFile.path }, playing, color), cover)
+                Shown(NowPlaying(song.id, song.title, song.artist, from, cover?.let { coverFile.path }, playing, color), cover)
             }
             if (next.np == shown.value?.np) return@launch
             // A newer event cancels this one; past here it has to finish or the file and the widgets fall behind the state.
             withContext(NonCancellable) {
                 shown.value = next
-                withContext(Dispatchers.IO) { app.snapshotFile.writeText(next.np.toJson().toString()) }
+                withContext(Dispatchers.IO) { snapshotFile.writeText(next.np.toJson().toString()) }
                 NowPlayingWidget().updateAll(app)
             }
         }
     }
 
-    private val Context.coverFile get() = File(filesDir, "widget_cover.jpg")
+    private val coverFile get() = app.dir("widget_cover.jpg")
 
     /** The same request as the notification's art, so it comes out of memory; squared and shrunk for RemoteViews. */
     private suspend fun cover(id: String): Bitmap? = withContext(Dispatchers.IO) {
@@ -175,17 +174,17 @@ class WidgetFeed(private val app: App, private val player: Player, private val s
         val full = (app.imageLoader.execute(req) as? SuccessResult)?.image?.toBitmap() ?: return@withContext null
         val side = minOf(full.width, full.height)
         val small = Bitmap.createBitmap(full, (full.width - side) / 2, (full.height - side) / 2, side, side).scale(300, 300)
-        val tmp = File(app.filesDir, "widget_cover.tmp")
+        val tmp = app.dir("widget_cover.tmp")
         tmp.outputStream().use { small.compress(Bitmap.CompressFormat.JPEG, 90, it) }
-        tmp.renameTo(app.coverFile)
+        tmp.renameTo(coverFile)
         small
     }
 }
 
-private fun load(ctx: Context): Shown? = runCatching {
+private fun load(): Shown? = runCatching {
     // A process that just started isn't playing, whatever was last written; the service says so itself when it is.
     // ponytail: a widget drawn before a crash or force stop keeps its pause button until the app next runs.
-    val np = NowPlaying.from(JSONObject(ctx.snapshotFile.readText())).copy(isPlaying = false)
+    val np = NowPlaying.from(JSONObject(snapshotFile.readText())).copy(isPlaying = false)
     Shown(np, np.cover?.let(BitmapFactory::decodeFile))
 }.getOrNull()
 
@@ -201,7 +200,7 @@ class NowPlayingWidget : GlanceAppWidget() {
     override val sizeMode = SizeMode.Responsive(setOf(SMALL, WIDE, LARGE, TALL))
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        if (shown.value == null) shown.compareAndSet(null, withContext(Dispatchers.IO) { load(context) })
+        if (shown.value == null) shown.compareAndSet(null, withContext(Dispatchers.IO) { load() })
         provideContent {
             // Collected rather than read once: a running session recomposes on update() without coming back through here.
             val s by shown.collectAsState()

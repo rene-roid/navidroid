@@ -114,7 +114,9 @@ import xyz.yuuki.navidroid.ui.ServerScreen
 import xyz.yuuki.navidroid.ui.StorageScreen
 import xyz.yuuki.navidroid.ui.AboutScreen
 import xyz.yuuki.navidroid.ui.forgetAccount
-import java.io.File
+import androidx.glance.appwidget.updateAll
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.launch
 import xyz.yuuki.navidroid.ui.migrateIcon
 import xyz.yuuki.navidroid.ui.Sub
 import xyz.yuuki.navidroid.ui.isTablet
@@ -133,6 +135,8 @@ class MainActivity : ComponentActivity() {
         migrateIcon(this)
         loggedIn = App.it.prefs.loggedIn
         if (loggedIn) connect()
+        // The widgets still show the account the last process ran as.
+        if (intent.getBooleanExtra(EXTRA_SWITCHED, false)) App.it.scope.launch { NowPlayingWidget().updateAll(App.it) }
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             registerForActivityResult(ActivityResultContracts.RequestPermission()) {}.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -162,11 +166,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun logout() {
+        val app = App.it
+        val left = app.accounts.without(app.account)
+        // Any other account is wiped whole by the next process, which finds its folder without an account.
+        if (app.account != DEFAULT_ACCOUNT) return app.restartAs(left)
         player?.c?.run {
             stop()
             clearMediaItems()
         }
-        val prefs = App.it.prefs
+        val prefs = app.prefs
         prefs.token = null
         prefs.salt = null
         prefs.endpoints = emptyList()
@@ -174,8 +182,10 @@ class MainActivity : ComponentActivity() {
         prefs.active = null
         prefs.pendingScrobbles = emptyList()
         forgetAccount()
-        File(filesDir, "queue.json").delete()
-        App.it.api.clearSaved()
+        app.dir("queue.json").delete()
+        app.api.clearSaved()
+        if (left.list.isNotEmpty()) return app.restartAs(left)
+        app.accounts = left
         loggedIn = false
     }
 
@@ -190,6 +200,7 @@ private fun Shell(onLogout: () -> Unit) {
     val nav = remember { Nav() }
     val player = LocalPlayer.current
     var nowPlaying by rememberSaveable { mutableStateOf(false) }
+    var addingAccount by rememberSaveable { mutableStateOf(false) }
     val wide = isWide()
     val tablet = isTablet()
     // A tablet in portrait has the rail but not the width for the player card, so the player is a bar under the page instead.
@@ -248,7 +259,7 @@ private fun Shell(onLogout: () -> Unit) {
                                     Route.Home -> HomeScreen()
                                     Route.Search -> SearchScreen()
                                     Route.Library -> LibraryScreen()
-                                    Route.Settings -> SettingsScreen(onLogout)
+                                    Route.Settings -> SettingsScreen(onLogout) { addingAccount = true }
                                     Route.Downloads -> DownloadsScreen()
                                     Route.Appearance -> AppearanceScreen()
                                     Route.HiddenPlaylists -> HiddenPlaylistsScreen()
@@ -308,6 +319,8 @@ private fun Shell(onLogout: () -> Unit) {
                 player?.let { NowPlaying(it) { nowPlaying = false } }
             }
             BackHandler(nowPlaying && (!wide || bar)) { nowPlaying = false }
+            // Over the whole shell, which stays as it is underneath for when this is cancelled; the empty pointerInput keeps touches off it.
+            if (addingAccount) Box(Modifier.fillMaxSize().pointerInput(Unit) {}) { LoginScreen({ addingAccount = false }) {} }
         }
     }
 }

@@ -1,6 +1,10 @@
 package xyz.yuuki.navidroid
 
 import android.app.Application
+import android.content.ComponentName
+import android.content.Intent
+import java.io.File
+import kotlinx.coroutines.launch
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Build
@@ -33,6 +37,9 @@ import okio.ByteString.Companion.toByteString
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 
+/** On the intent that starts [MainActivity] after [App.restartAs]. */
+const val EXTRA_SWITCHED = "switched"
+
 class App : Application(), SingletonImageLoader.Factory {
     companion object {
         lateinit var it: App
@@ -44,12 +51,57 @@ class App : Application(), SingletonImageLoader.Factory {
     lateinit var api: Api
     val offline by lazy { Offline(this) }
 
+    /** The account this process runs as, until [restartAs]. */
+    lateinit var account: String
+        private set
+
+    /** Saved before the setter returns: a restart may be right behind it. */
+    var accounts: Accounts
+        get() = Accounts.from(getSharedPreferences("accounts", MODE_PRIVATE).getString("accounts", null))
+        set(v) {
+            getSharedPreferences("accounts", MODE_PRIVATE).edit().putString("accounts", v.toJson()).commit()
+        }
+
+    /** Where the account keeps [name] for good. Every path the app makes comes from here or [cacheDir], so accounts never share one. */
+    fun dir(name: String) = File(filesDir, accountPath(account, name))
+
+    /** Where the account keeps [name] that Android may clear. */
+    fun cacheDir(name: String) = File(cacheDir, accountPath(account, name))
+
+    /**
+     * Saves [accounts] and starts the process over as its active one. Media3's caches can't be opened a second
+     * time in one process, and everything else here was built for the account it started with.
+     */
+    fun restartAs(accounts: Accounts) {
+        this.accounts = accounts
+        prefs.flush()
+        startActivity(Intent.makeRestartActivityTask(ComponentName(this, MainActivity::class.java)).putExtra(EXTRA_SWITCHED, true))
+        Runtime.getRuntime().exit(0)
+    }
+
+    private fun wipe(id: String) {
+        File(cacheDir, "a-$id").deleteRecursively()
+        deleteSharedPreferences(prefsName(id))
+        deleteDatabase(accountDb(id))
+        // Last, as this folder is what says there is still something to wipe.
+        File(filesDir, "a-$id").deleteRecursively()
+    }
+
     override fun onCreate() {
         super.onCreate()
         it = this
-        prefs = Prefs(this)
+        account = accounts.active
+        dir("").mkdirs()
+        prefs = Prefs(this, account)
         api = Api(prefs, scope)
-        if (prefs.loggedIn) api.reconnect()
+        if (prefs.loggedIn) {
+            // Also what lists the account of an install from before there were several, and keeps the label on the preferred address.
+            val me = Account(account, accountLabel(prefs.username.orEmpty(), prefs.endpoints[0]))
+            if (me !in accounts.list) accounts = accounts.with(me)
+            api.reconnect()
+        }
+        // Here rather than at logout: by now nothing has the logged-out account's files open.
+        scope.launch(Dispatchers.IO) { orphans(filesDir.list().orEmpty().toList(), accounts).forEach(::wipe) }
 
         // Re-race the endpoints whenever the network changes (home Wi-Fi <-> mobile data).
         getSystemService(ConnectivityManager::class.java).registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
@@ -85,7 +137,7 @@ class App : Application(), SingletonImageLoader.Factory {
     override fun newImageLoader(context: PlatformContext) = ImageLoader.Builder(context)
         .crossfade(150)
         // The disk cache is read before the network, so covers seen once also show offline.
-        .diskCache { DiskCache.Builder().directory(cacheDir.resolve("images")).maxSizeBytes(512L * 1024 * 1024).build() }
+        .diskCache { DiskCache.Builder().directory(cacheDir("images")).maxSizeBytes(512L * 1024 * 1024).build() }
         .components {
             add(CoverFetcher.Factory())
             add(OkHttpNetworkFetcherFactory(callFactory = { imageHttp }))

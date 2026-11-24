@@ -302,8 +302,8 @@ fun shuffledRadio(songs: List<Song>, fresh: Boolean, rnd: Random = Random): List
 
 // ---- settings -------------------------------------------------------------------------------
 
-class Prefs(ctx: Context) {
-    private val p = ctx.getSharedPreferences("navidroid", Context.MODE_PRIVATE)
+class Prefs(ctx: Context, account: String) {
+    private val p = ctx.getSharedPreferences(prefsName(account), Context.MODE_PRIVATE)
 
     var endpoints: List<String>
         get() = p.getString("endpoints", null)?.let { JSONArray(it) }?.let { a -> List(a.length()) { a.getString(it) } } ?: emptyList()
@@ -371,6 +371,9 @@ class Prefs(ctx: Context) {
     fun flag(k: String, v: Boolean) = p.edit().putBoolean(k, v).apply()
 
     fun clear() = p.edit().clear().apply()
+
+    /** Waits for everything set so far to be on disk, for when the process is about to end. */
+    fun flush() = p.edit().commit()
 
     private fun str(k: String) = object : kotlin.properties.ReadWriteProperty<Any, String?> {
         override fun getValue(thisRef: Any, property: kotlin.reflect.KProperty<*>) = p.getString(k, null)
@@ -598,7 +601,7 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
     }
 
     /** Server answers kept on disk, so screens open at once and still open offline. */
-    private val saved = File(App.it.cacheDir, "meta").apply { mkdirs() }
+    private val saved = App.it.cacheDir("meta").apply { mkdirs() }
 
     init {
         // ponytail: trims the least recently refreshed at startup to 64 MB; scans the whole folder, fine for thousands of files.
