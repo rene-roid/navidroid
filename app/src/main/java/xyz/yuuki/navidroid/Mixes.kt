@@ -155,7 +155,7 @@ data class Tile(
 data class Section(val key: String, val title: String, val tiles: List<Tile>)
 data class Home(val greeting: String, val quick: List<Tile>, val sections: List<Section>)
 
-fun Playlist.tile() = Tile(Kind.Playlist, id, mix?.title ?: name, mix?.description ?: "By $owner", coverArt, mix)
+fun Playlist.tile() = Tile(Kind.Playlist, id, mix?.title ?: name, mix?.description ?: "${if (smart) "Smart playlist • " else ""}By $owner", coverArt, mix)
 fun Album.tile() = Tile(Kind.Album, id, name, listOfNotNull(year.takeIf { it > 0 }, artist.ifBlank { null }).joinToString(" • "), coverArt)
 fun Artist.tile() = Tile(Kind.Artist, id, name, "Artist", coverArt)
 /** An artist page's own mixes: "X Mix" is all of their songs, "X Radio" mixes in artists like them. */
@@ -213,6 +213,26 @@ fun buildHome(
     }
     return Home(greeting, quick, sections)
 }
+
+// ---- discovery shelves ------------------------------------------------------------------------
+
+/** Albums by artists like the one just heard, one artist after another round-robin, none already in [recent]. */
+fun becauseShelf(byArtist: List<List<Album>>, recent: List<Album>): List<Album> {
+    val seen = recent.map { it.id }.toSet()
+    return (0 until (byArtist.maxOfOrNull { it.size } ?: 0)).flatMap { i -> byArtist.mapNotNull { it.getOrNull(i) } }
+        .filter { it.id !in seen }.distinctBy { it.id }.take(10)
+}
+
+fun unplayedShelf(random: List<Album>) = random.filter { it.playCount == 0 }.take(12)
+
+/** Albums you do play, but not just now: [frequent] without the 6 newest of [recent], in a different order each time. */
+fun jumpBackShelf(frequent: List<Album>, recent: List<Album>, rnd: kotlin.random.Random = kotlin.random.Random): List<Album> {
+    val seen = recent.take(6).map { it.id }.toSet()
+    return frequent.filter { it.playCount > 0 && it.id !in seen }.shuffled(rnd).take(10)
+}
+
+/** The years to look back to, nearest first, as (year, title). */
+fun throwbackYears(thisYear: Int) = listOf(10, 20, 30).map { thisYear - it to "Released $it years ago" }
 
 /** "Listening now" cards: what others (and your other devices) play, leaving out this phone's own entry. */
 fun listeningTiles(entries: List<Listener>, me: String?, playingHere: String?) = entries

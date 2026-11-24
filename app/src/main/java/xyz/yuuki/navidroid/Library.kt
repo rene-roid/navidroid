@@ -57,6 +57,9 @@ fun visibleTypes(tiles: List<Tile>) = LibType.entries.filter { it != LibType.Rad
 /** "Radio • NaviBeat", "Mix • NaviBeat": what a generated row is, by whom. */
 fun generatedSubtitle(t: Tile) = "${if (libType(t) == LibType.Radios) "Radio" else "Mix"} • ${t.mix?.by}"
 
+/** A playlist's row: generated ones say what they are, the rest "Playlist • owner" ("Smart playlist" for .nsp ones). */
+fun libraryPlaylist(p: Playlist) = p.tile().let { it.copy(subtitle = if (p.mix != null) generatedSubtitle(it) else "${if (p.smart) "Smart playlist" else "Playlist"} • ${p.owner}") }
+
 fun creator(t: Tile, user: String) = if (t.kind == Kind.Liked) user else t.mix?.by ?: t.subtitle.substringAfter(" • ", "")
 
 /**

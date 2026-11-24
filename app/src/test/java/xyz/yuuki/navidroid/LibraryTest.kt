@@ -8,7 +8,7 @@ class LibraryTest {
     private fun pl(id: String, name: String, owner: String, comment: String = "") = Playlist(id, name, comment, owner, 10, 0, null)
 
     // Tiles the way the screen builds them.
-    private fun playlist(p: Playlist) = p.tile().let { it.copy(subtitle = if (p.mix != null) generatedSubtitle(it) else "Playlist • ${p.owner}") }
+    private fun playlist(p: Playlist) = libraryPlaylist(p)
     private val liked = likedTile(null)
     private val road = playlist(pl("road", "Road trip", "yuuki"))
     private val gym = playlist(pl("gym", "Gym", "ana"))
@@ -26,6 +26,13 @@ class LibraryTest {
 
     private fun rows(f: LibFilter = LibFilter(), sort: LibSort = LibSort.Default, showMixes: Boolean = true, hit: (Tile) -> Boolean = { true }) =
         libraryRows(tiles, f, sort, "yuuki", showMixes, { it.id in saved || it.kind == Kind.Liked }, { it.id in downloaded }, hit).map { it.id }
+
+    @Test
+    fun smartPlaylistsSaySoAndKeepTheirOwner() {
+        val smart = libraryPlaylist(Playlist("s", "Never played", "", "yuuki", 0, 0, null, smart = true))
+        assertEquals("Smart playlist • yuuki", smart.subtitle)
+        assertEquals("yuuki", creator(smart, "yuuki"))
+    }
 
     @Test
     fun radiosSayRadio() = assertEquals(listOf("Radio • NaviBeat", "Mix • NaviBeat", "Radio • Ado"), listOf(artistRadio, daily, onPhoneRadio).map { it.subtitle })
