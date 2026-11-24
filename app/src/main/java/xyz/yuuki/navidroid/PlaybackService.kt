@@ -54,8 +54,8 @@ import org.json.JSONObject
 import xyz.yuuki.navidroid.ui.coverRequest
 import java.io.IOException
 
-/** [auto]: the song this one was picked to follow, when the app queued it (radio, autoplay) and not the user. */
-fun Song.toMediaItem(auto: String? = null): MediaItem {
+/** [auto]: the song this one was picked to follow, when the app queued it (radio, autoplay) and not the user. [jam]: the Jam guest who added it. */
+fun Song.toMediaItem(auto: String? = null, jam: String? = null): MediaItem {
     val app = App.it
     val art = coverArt?.let { id -> app.offline.coverFile(id).takeIf { it.exists() }?.let(Uri::fromFile) ?: Uri.parse(app.api.coverUrl(id, 600)) }
     return MediaItem.Builder()
@@ -74,7 +74,7 @@ fun Song.toMediaItem(auto: String? = null): MediaItem {
                 .setDurationMs(duration * 1000L)
                 .setIsPlayable(true)
                 .setIsBrowsable(false)
-                .setExtras(Bundle().apply { putString("song", toJson().toString()); putString("auto", auto) })
+                .setExtras(Bundle().apply { putString("song", toJson().toString()); putString("auto", auto); putString("jam", jam) })
                 .build(),
         )
         .build()
@@ -82,6 +82,7 @@ fun Song.toMediaItem(auto: String? = null): MediaItem {
 
 val MediaItem.song: Song? get() = mediaMetadata.extras?.getString("song")?.let { Song.from(JSONObject(it)) }
 val MediaItem.auto: String? get() = mediaMetadata.extras?.getString("auto")
+val MediaItem.jam: String? get() = mediaMetadata.extras?.getString("jam")
 
 class PlaybackService : MediaSessionService() {
     private var session: MediaSession? = null
@@ -178,6 +179,7 @@ class PlaybackService : MediaSessionService() {
             })
             .build()
 
+        Jam.player = player
         restoring = restoreQueue(player)
         scope.launch {
             while (isActive) {
@@ -201,6 +203,8 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         buttons.removeCallbacksAndMessages(null)
+        Jam.stop()
+        Jam.player = null
         session?.run {
             saveQueue(player)
             player.release()
@@ -213,7 +217,7 @@ class PlaybackService : MediaSessionService() {
 
     private fun saveQueue(player: Player) {
         val items = JSONArray()
-        for (i in 0 until player.mediaItemCount) player.getMediaItemAt(i).run { song?.let { items.put(it.toJson().put("auto", auto)) } }
+        for (i in 0 until player.mediaItemCount) player.getMediaItemAt(i).run { song?.let { items.put(it.toJson().put("auto", auto).put("jam", jam)) } }
         val json = JSONObject()
             .put("items", items)
             .put("index", player.currentMediaItemIndex)
@@ -228,7 +232,7 @@ class PlaybackService : MediaSessionService() {
     private fun restoreQueue(player: Player) =
         scope.launch {
             val o = withContext(Dispatchers.IO) { runCatching { JSONObject(queueFile.readText()) }.getOrNull() } ?: return@launch
-            val songs = o.getJSONArray("items").objects().map { Song.from(it).toMediaItem(it.s("auto")) }
+            val songs = o.getJSONArray("items").objects().map { Song.from(it).toMediaItem(it.s("auto"), it.s("jam")) }
             if (songs.isEmpty() || player.mediaItemCount > 0) return@launch
             player.setMediaItems(songs, o.optInt("index").coerceIn(0, songs.lastIndex), o.optLong("position"))
             player.shuffleModeEnabled = o.optBoolean("shuffle")
