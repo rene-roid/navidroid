@@ -386,17 +386,17 @@ class Prefs(account: String, open: (String) -> SharedPreferences) {
         set(v) = p.edit().putString("autoPins", v.joinToString("\n")).apply()
 
     // Customization: wallpaper accent, Home's layout, list density, Now Playing style
-    var accentWallpaper by bool("accentWallpaper", false)
+    var accentWallpaper by bool("accentWallpaper", false, device)
     /** Home's section keys in the order chosen; empty until something is moved. */
     var homeOrder: List<String>
-        get() = p.getString("homeOrder", null)?.split(',')?.filter { it.isNotBlank() } ?: emptyList()
-        set(v) = p.edit().putString("homeOrder", v.joinToString(",")).apply()
+        get() = device.getString("homeOrder", null)?.split(',')?.filter { it.isNotBlank() } ?: emptyList()
+        set(v) = device.edit().putString("homeOrder", v.joinToString(",")).apply()
     var homeHidden: Set<String>
-        get() = p.getStringSet("homeHidden", null) ?: emptySet()
-        set(v) = p.edit().putStringSet("homeHidden", v).apply()
-    var compactLists by bool("compactLists", false)
-    var nowPlayingStyle by int("nowPlayingStyle", 0)
-    var largeControls by bool("largeControls", false)
+        get() = device.getStringSet("homeHidden", null) ?: emptySet()
+        set(v) = device.edit().putStringSet("homeHidden", v).apply()
+    var compactLists by bool("compactLists", false, device)
+    var nowPlayingStyle by int("nowPlayingStyle", 0, device)
+    var largeControls by bool("largeControls", false, device)
 
     val loggedIn get() = token != null && endpoints.isNotEmpty()
 

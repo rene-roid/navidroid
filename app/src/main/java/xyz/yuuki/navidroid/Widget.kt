@@ -370,7 +370,7 @@ class WidgetConfigActivity : ComponentActivity() {
                 var bg by remember { mutableIntStateOf(0) }
                 var controls by remember { mutableStateOf(true) }
                 val scope = rememberCoroutineScope()
-                val playing by produceState(shown.value) { if (value == null) value = withContext(Dispatchers.IO) { load(this@WidgetConfigActivity) } }
+                val playing by produceState(shown.value) { if (value == null) value = withContext(Dispatchers.IO) { load() } }
                 LaunchedEffect(Unit) {
                     val prefs = getAppWidgetState(this@WidgetConfigActivity, PreferencesGlanceStateDefinition, id)
                     bg = prefs[BG] ?: 0
