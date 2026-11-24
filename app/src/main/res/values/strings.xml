@@ -4,4 +4,9 @@
     <string name="widget_name">Now playing</string>
     <string name="widget_description">The current song with playback controls</string>
     <string name="widget_empty">Tap to open navidroid</string>
+    <string name="widget_playlist_name">Playlist</string>
+    <string name="widget_playlist_description">Play a playlist, mix or your liked songs</string>
+    <string name="shortcut_liked">Liked Songs</string>
+    <string name="shortcut_shuffle">Shuffle my library</string>
+    <string name="shortcut_search">Search</string>
 </resources>

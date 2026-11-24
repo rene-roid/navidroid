@@ -20,7 +20,9 @@ android {
     flavorDimensions += "target"
     productFlavors {
         // What GitHub releases ship.
-        create("github") { dimension = "target" }
+        create("github") {
+            dimension = "target"
+        }
         // The Xiaomi 17 Pro's rear screen only plays along with a fixed list of music-app packages, so this build borrows one.
         create("xiaomi") {
             dimension = "target"

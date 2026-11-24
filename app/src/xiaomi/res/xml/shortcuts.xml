@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="search"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_search">
+        <intent
+            android:action="xyz.yuuki.navidroid.SHORTCUT"
+            android:targetClass="xyz.yuuki.navidroid.MainActivity"
+            android:targetPackage="com.netease.cloudmusic">
+            <extra android:name="shortcut" android:value="search" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="shuffle"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_shuffle">
+        <intent
+            android:action="xyz.yuuki.navidroid.SHORTCUT"
+            android:targetClass="xyz.yuuki.navidroid.MainActivity"
+            android:targetPackage="com.netease.cloudmusic">
+            <extra android:name="shortcut" android:value="shuffle" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="liked"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/shortcut_liked">
+        <intent
+            android:action="xyz.yuuki.navidroid.SHORTCUT"
+            android:targetClass="xyz.yuuki.navidroid.MainActivity"
+            android:targetPackage="com.netease.cloudmusic">
+            <extra android:name="shortcut" android:value="play:Liked:liked" />
+        </intent>
+    </shortcut>
+</shortcuts>

@@ -292,7 +292,7 @@ private fun PlayPause(np: NowPlaying, size: Dp, modifier: GlanceModifier = Glanc
  * A rounded background, with the system's widget radius when [radius] is null.
  * ponytail: before Android 12 nothing clips to it, so a cover filling the widget keeps square corners there; round the bitmap if that matters.
  */
-private fun GlanceModifier.shape(color: Color, radius: Dp?) = when {
+internal fun GlanceModifier.shape(color: Color, radius: Dp?) = when {
     Build.VERSION.SDK_INT < 31 -> background(ImageProvider(R.drawable.widget_bg), colorFilter = ColorFilter.tint(ColorProvider(color)))
     radius == null -> background(color).cornerRadius(android.R.dimen.system_app_widget_background_radius)
     else -> background(color).cornerRadius(radius)
