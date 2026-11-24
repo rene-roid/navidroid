@@ -1,6 +1,28 @@
 package xyz.yuuki.navidroid.ui
 
 import android.os.Bundle
+import android.os.SystemClock
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.rounded.Bedtime
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.DragHandle
+import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.zIndex
+import xyz.yuuki.navidroid.Playback
+import xyz.yuuki.navidroid.SleepTimer
+import xyz.yuuki.navidroid.moved
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material.icons.rounded.MoreVert
@@ -128,6 +150,10 @@ class PlayerState(val c: MediaController) : Player.Listener {
     /** What plays after the current song, in play order (follows shuffle). */
     var upNext by mutableStateOf<List<Queued>>(emptyList())
 
+    /** What this queue played before the current song, the latest first. */
+    var history by mutableStateOf<List<Queued>>(emptyList())
+    var speed by mutableFloatStateOf(1f)
+
     init {
         c.addListener(this)
         sync(null)
@@ -142,6 +168,7 @@ class PlayerState(val c: MediaController) : Player.Listener {
         repeat = c.repeatMode
         from = c.playlistMetadata.title?.toString()
         index = c.currentMediaItemIndex
+        speed = c.playbackParameters.speed
         if (events != null && !events.containsAny(
                 Player.EVENT_TIMELINE_CHANGED, Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED,
                 Player.EVENT_POSITION_DISCONTINUITY,
@@ -149,13 +176,21 @@ class PlayerState(val c: MediaController) : Player.Listener {
         ) return
         song = c.currentMediaItem?.song
         val t = c.currentTimeline
-        upNext = if (t.isEmpty) emptyList() else buildList {
-            var i = t.getNextWindowIndex(c.currentMediaItemIndex, Player.REPEAT_MODE_OFF, c.shuffleModeEnabled)
+        fun from(next: Boolean) = if (t.isEmpty) emptyList() else buildList {
+            fun step(i: Int) = if (next) t.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, c.shuffleModeEnabled) else t.getPreviousWindowIndex(i, Player.REPEAT_MODE_OFF, c.shuffleModeEnabled)
+            var i = step(c.currentMediaItemIndex)
             while (i != C.INDEX_UNSET && size < 200) {
                 c.getMediaItemAt(i).run { song?.let { add(Queued(i, it, auto, jam)) } }
-                i = t.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, c.shuffleModeEnabled)
+                i = step(i)
             }
         }
+        upNext = from(next = true)
+        history = from(next = false)
+    }
+
+    /** Has the service drag [q] to where [to] plays; only it can reorder a shuffled queue. */
+    fun move(q: Queued, to: Queued, auto: String?) {
+        c.sendCustomCommand(Playback.MOVE, Bundle().apply { putInt("from", q.index); putInt("to", to.index); putString("auto", auto) })
     }
 
     fun play(songs: List<Song>, start: Int = 0, shuffled: Boolean = false, from: String? = null, radio: Boolean = false) {
@@ -251,9 +286,12 @@ fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
     // A song without lyrics shows its cover as usual.
     val lyricsFirst = nowPlayingStyle == 2 && (lyrics.data != null || lyrics.loading)
 
+    val list = rememberLazyListState()
+    val queue = rememberQueueUi(p, list)
+
     Box(Modifier.fillMaxSize().then(rememberPullToClose(onClose))) {
         Aurora(song.coverArt, null, modifier = Modifier.fillMaxSize(), plain = color)
-        LazyColumn(Modifier.align(Alignment.TopCenter).widthIn(max = 640.dp).fillMaxSize().statusBarsPadding()) {
+        LazyColumn(Modifier.align(Alignment.TopCenter).widthIn(max = 640.dp).fillMaxSize().statusBarsPadding(), list) {
             item("top") {
                 Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClose) { Icon(Icons.Rounded.KeyboardArrowDown, "Close", Modifier.size(32.dp)) }
@@ -261,7 +299,7 @@ fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
                         Text("PLAYING FROM", style = MaterialTheme.typography.labelSmall, letterSpacing = 1.sp, color = Color.White.copy(alpha = .8f))
                         Text(p.from ?: song.album, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    SongMenu(song, Color.White)
+                    PlayerMenu(p, song)
                 }
             }
             if (lyricsFirst) {
@@ -278,8 +316,8 @@ fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
             item("controls") { if (large) Controls(p, play = 92.dp, skip = 56.dp, side = 34.dp) else Controls(p) }
             item("jam") { JamPill(Modifier.padding(top = 4.dp)) }
             if (!lyricsFirst) lyrics.data?.let { l -> item("lyrics") { LyricsCard(p, l, pos, color) } }
-            if (p.upNext.isNotEmpty()) item("next") { QueueHeader(p, Modifier.padding(start = 24.dp, top = 28.dp, end = 8.dp), MaterialTheme.typography.titleLarge) }
-            queue(p, start = 24.dp)
+            if (p.upNext.isNotEmpty() || p.history.isNotEmpty()) item("next") { QueueHeader(queue, Modifier.padding(start = 24.dp, top = 28.dp, end = 8.dp), MaterialTheme.typography.titleLarge) }
+            queue(queue, start = 24.dp)
             item("bottom") {
                 Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
                 Spacer(Modifier.height(32.dp))
@@ -288,16 +326,18 @@ fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
     }
 }
 
-/** "Up next" and what can be done with the whole queue. */
+/** "Up next" or "History", the button that swaps them, and what can be done with the whole queue. */
 @Composable
-private fun QueueHeader(p: PlayerState, modifier: Modifier, style: TextStyle) {
+private fun QueueHeader(ui: QueueUi, modifier: Modifier, style: TextStyle) {
+    val p = ui.p
     var open by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf<List<Song>?>(null) }
     saving?.let { NewPlaylist(it) { saving = null } }
     var jam by remember { mutableStateOf(false) }
     if (jam) JamSheet { jam = false }
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text("Up next", style = style, modifier = Modifier.weight(1f))
+        Text(if (ui.history) "History" else "Up next", style = style, modifier = Modifier.weight(1f))
+        IconButton({ ui.history = !ui.history }) { Icon(Icons.Rounded.History, if (ui.history) "Show up next" else "Show history", tint = if (ui.history) Accent else Sub) }
         Box {
             IconButton({ open = true }) { Icon(Icons.Rounded.MoreVert, "Queue options", tint = Sub) }
             DropdownMenu(open, { open = false }, containerColor = Elevated) {
@@ -309,27 +349,213 @@ private fun QueueHeader(p: PlayerState, modifier: Modifier, style: TextStyle) {
     }
 }
 
-/** The queue's rows, with a line above the first of each run of songs the app added by itself. */
-private fun LazyListScope.queue(p: PlayerState, start: Dp, cover: Dp = 44.dp) = itemsIndexed(p.upNext, key = { _, q -> "${q.index}:${q.song.id}" }) { n, q ->
-    Column(Modifier.animateItem()) {
-        if (q.auto != null && q.auto != p.upNext.getOrNull(n - 1)?.auto) Row(Modifier.fillMaxWidth().padding(start = start, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (q.auto.isEmpty()) "Autoplay" else "Autoplay · songs like ${q.auto}", style = MaterialTheme.typography.labelLarge, color = Sub,
-                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
-            )
-            TextButton({ p.remove(p.upNext.filter { it.auto != null }) }) { Text("Clear", color = Sub) }
+/** What a queue list keeps between frames: whether it shows History, and the row being dragged up or down Up next. */
+private class QueueUi(val p: PlayerState, val list: LazyListState) {
+    var history by mutableStateOf(false)
+
+    /** Up next as dragged so far. It stays up after the drop until the player reports the move, so rows don't jump back in between. */
+    var dragged by mutableStateOf<List<Queued>?>(null)
+
+    /** The timeline index of the row under the finger. */
+    var dragging by mutableStateOf<Int?>(null)
+
+    /** Where the finger holds that row, from the top of the list. */
+    var top by mutableFloatStateOf(0f)
+    var height = 0
+
+    val rows get() = dragged ?: p.upNext
+
+    fun start(q: Queued, key: String) {
+        val me = list.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key } ?: return
+        dragged = p.upNext
+        dragging = q.index
+        top = me.offset.toFloat()
+        height = me.size
+    }
+
+    fun offsetOf(key: String) = list.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key }?.offset
+
+    /** The row trades places with a neighbour once its middle is past the neighbour's. */
+    fun settle() {
+        val rows = dragged ?: return
+        val at = rows.indexOfFirst { it.index == dragging }.takeIf { it >= 0 } ?: return
+        val keys = queueKeys(rows)
+        val items = list.layoutInfo.visibleItemsInfo
+        val mid = top + height / 2
+        fun middle(n: Int) = items.firstOrNull { it.key == keys.getOrNull(n) }?.let { it.offset + it.size / 2 }
+        val to = when {
+            middle(at + 1)?.let { mid > it } == true -> at + 1
+            middle(at - 1)?.let { mid < it } == true -> at - 1
+            else -> return
         }
-        val (i, s) = q
-        Row(
-            Modifier.fillMaxWidth().clickable { p.c.seekTo(i, 0); p.c.play() }.padding(start = start, end = 8.dp, top = 6.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Cover(s.coverArt, 120, Modifier.size(cover))
-            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                Text(s.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (q.jam != null) "${s.artist} · Added by ${q.jam}" else s.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        // The list holds on to its first visible row, and would scroll away with it when that's one of the two.
+        list.requestScrollToItem(list.firstVisibleItemIndex, list.firstVisibleItemScrollOffset)
+        dragged = draggedTo(rows, at, to)
+    }
+
+    fun drop() {
+        val q = p.upNext.firstOrNull { it.index == dragging }
+        val moved = dragged?.firstOrNull { it.index == dragging }
+        val to = p.upNext.getOrNull(dragged.orEmpty().indexOf(moved))
+        dragging = null
+        if (q == null || moved == null || to == null || to == q) dragged = null else p.move(q, to, moved.auto)
+    }
+}
+
+@Composable
+private fun rememberQueueUi(p: PlayerState, list: LazyListState): QueueUi {
+    val ui = remember(p, list) { QueueUi(p, list) }
+    // The queue changed: the move arrived, or something else made the dragged copy stale.
+    LaunchedEffect(p.upNext) {
+        ui.dragged = null
+        ui.dragging = null
+    }
+    // Holding a row past either end scrolls the list under it.
+    LaunchedEffect(ui.dragging != null) {
+        while (ui.dragging != null) {
+            withFrameNanos {}
+            val view = list.layoutInfo
+            val past = minOf(ui.top - view.viewportStartOffset, 0f) + maxOf(ui.top + ui.height - view.viewportEndOffset, 0f)
+            if (past != 0f) {
+                list.scrollBy(past.coerceIn(-30f, 30f))
+                ui.settle()
             }
-            IconButton({ p.c.removeMediaItem(i) }) { Icon(Icons.Rounded.Close, "Remove", tint = Sub) }
+        }
+    }
+    return ui
+}
+
+/** Up next after the song at [from] is dragged to [to]. It takes the marker of the song now before it, so what autoplay added stays in one run, and a song dragged above that run becomes the user's. */
+fun draggedTo(rows: List<Queued>, from: Int, to: Int): List<Queued> =
+    rows.moved(from, to).let { l -> l.mapIndexed { n, q -> if (n == to) q.copy(auto = l.getOrNull(n - 1)?.auto) else q } }
+
+/** A key per row that a song keeps when the queue reorders: its id, numbered when it's queued more than once. */
+fun queueKeys(rows: List<Queued>): List<String> {
+    val seen = HashMap<String, Int>()
+    return rows.map { "${it.song.id}#${seen.merge(it.song.id, 1, Int::plus)}" }
+}
+
+/** The queue's rows, with a line above the first of each run of songs the app added by itself; or the songs already played. */
+private fun LazyListScope.queue(ui: QueueUi, start: Dp, cover: Dp = 44.dp) {
+    val p = ui.p
+    if (ui.history) {
+        if (p.history.isEmpty()) item { Hint("Nothing played yet") }
+        items(p.history, key = { "h${it.index}" }) { q -> QueueRow(p, q, start, cover, Modifier.animateItem()) {} }
+        return
+    }
+    val rows = ui.rows
+    val keys = queueKeys(rows)
+    itemsIndexed(rows, key = { n, _ -> keys[n] }) { n, q ->
+        val key = keys[n]
+        val held = q.index == ui.dragging
+        val haptics = LocalHapticFeedback.current
+        // What the gesture reads when it starts, long after it was set up.
+        val row by rememberUpdatedState(q to key)
+        Column(if (held) Modifier.zIndex(1f).graphicsLayer { translationY = ui.offsetOf(key)?.let { ui.top - it } ?: 0f } else Modifier.animateItem()) {
+            if (q.auto != null && q.auto != rows.getOrNull(n - 1)?.auto) Row(Modifier.fillMaxWidth().padding(start = start, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (q.auto.isEmpty()) "Autoplay" else "Autoplay · songs like ${q.auto}", style = MaterialTheme.typography.labelLarge, color = Sub,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+                )
+                TextButton({ p.remove(p.upNext.filter { it.auto != null }) }) { Text("Clear", color = Sub) }
+            }
+            QueueRow(p, q, start, cover, if (held) Modifier.background(Color.White.copy(alpha = .12f)) else Modifier) {
+                IconButton({ p.c.removeMediaItem(q.index) }) { Icon(Icons.Rounded.Close, "Remove", tint = Sub) }
+                Icon(
+                    Icons.Rounded.DragHandle, "Hold and drag to reorder", tint = Sub,
+                    modifier = Modifier.size(40.dp).padding(8.dp).pointerInput(Unit) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                ui.start(row.first, row.second)
+                            },
+                            onDragEnd = ui::drop, onDragCancel = ui::drop,
+                        ) { change, by ->
+                            change.consume()
+                            if (ui.dragging != null) {
+                                ui.top += by.y
+                                ui.settle()
+                            }
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** One song of the queue; tapping it jumps there. */
+@Composable
+private fun QueueRow(p: PlayerState, q: Queued, start: Dp, cover: Dp, modifier: Modifier, trailing: @Composable () -> Unit) {
+    Row(
+        modifier.fillMaxWidth().clickable { p.c.seekTo(q.index, 0); p.c.play() }.padding(start = start, end = 8.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Cover(q.song.coverArt, 120, Modifier.size(cover))
+        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+            Text(q.song.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(if (q.jam != null) "${q.song.artist} · Added by ${q.jam}" else q.song.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        trailing()
+    }
+}
+
+private val SLEEP_MINUTES = listOf(5, 15, 30, 45, 60)
+private val SPEEDS = listOf(.5f, .75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
+
+private fun speedLabel(x: Float) = "${x.toString().removeSuffix(".0")}x"
+
+/** How long until the sleep timer stops the music, in ms; null when none is set. */
+@Composable
+private fun rememberSleepLeft(p: PlayerState): Long? {
+    val timer = Playback.sleep.collectAsState().value ?: return null
+    return produceState(0L, timer, p.song?.id, p.speed) {
+        while (true) {
+            value = timer.at?.let { it - SystemClock.elapsedRealtime() } ?: ((p.c.duration.takeIf { it > 0 } ?: ((p.song?.duration ?: 0) * 1000L)) - p.c.currentPosition).div(p.speed).toLong()
+            delay(500)
+        }
+    }.value
+}
+
+/** The song's menu, with the sleep timer and the playback speed after it. */
+@Composable
+private fun PlayerMenu(p: PlayerState, song: Song) {
+    var sleep by remember { mutableStateOf(false) }
+    var speed by remember { mutableStateOf(false) }
+    val left = rememberSleepLeft(p)
+    SongMenu(song, Color.White) { close ->
+        HorizontalDivider()
+        DropdownMenuItem({ Text(if (left == null) "Sleep timer" else "Sleep timer · ${formatTime(left)} left") }, { close(); sleep = true }, leadingIcon = { Icon(Icons.Rounded.Bedtime, null, tint = if (left == null) Color.White else Accent) })
+        DropdownMenuItem({ Text("Speed · ${speedLabel(p.speed)}") }, { close(); speed = true }, leadingIcon = { Icon(Icons.Rounded.Speed, null, tint = if (p.speed == 1f) Color.White else Accent) })
+    }
+    if (sleep) {
+        val timer = Playback.sleep.collectAsState().value
+        PickSheet(
+            "Sleep timer", if (left == null) "Stops the music by itself, fading out at the end" else "Stops in ${formatTime(left)}",
+            SLEEP_MINUTES.map { if (it == 60) "1 hour" else "$it minutes" } + "End of this song" + "Off",
+            when {
+                timer == null -> SLEEP_MINUTES.size + 1
+                timer.at == null -> SLEEP_MINUTES.size
+                else -> -1
+            },
+            { sleep = false },
+        ) { n -> Playback.sleep.value = SLEEP_MINUTES.getOrNull(n)?.let { SleepTimer(SystemClock.elapsedRealtime() + it * 60_000L) } ?: SleepTimer(null).takeIf { n == SLEEP_MINUTES.size } }
+    }
+    if (speed) PickSheet("Playback speed", "Until the app closes", SPEEDS.map(::speedLabel), SPEEDS.indexOf(p.speed), { speed = false }) { p.c.setPlaybackSpeed(SPEEDS[it]) }
+}
+
+/** A sheet to pick one of [options] from; [picked] has the tick. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PickSheet(title: String, note: String, options: List<String>, picked: Int, onDismiss: () -> Unit, onPick: (Int) -> Unit) = ModalBottomSheet(onDismiss, containerColor = Elevated) {
+    Column(Modifier.padding(bottom = 24.dp).verticalScroll(rememberScrollState())) {
+        Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp))
+        Text(note, style = MaterialTheme.typography.bodySmall, color = Sub, modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 8.dp))
+        options.forEachIndexed { n, option ->
+            Row(Modifier.fillMaxWidth().clickable { onPick(n); onDismiss() }.padding(horizontal = 24.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(option, style = MaterialTheme.typography.bodyLarge, color = if (n == picked) Accent else Color.White, modifier = Modifier.weight(1f))
+                if (n == picked) Icon(Icons.Rounded.Check, null, tint = Accent)
+            }
         }
     }
 }
@@ -438,6 +664,8 @@ fun DockedPlayer(p: PlayerState, modifier: Modifier = Modifier) {
     val lyrics = rememberLoad("lyrics:${song.id}") { App.it.api.lyrics(song.id) }
     val pos = rememberPosition(p, 200)
     var showQueue by rememberSaveable { mutableStateOf(false) }
+    val list = rememberLazyListState()
+    val queue = rememberQueueUi(p, list)
     val tablet = isTablet()
     // A phone in landscape is too short for the full player and a panel, so a panel opens over a compact player.
     var open by rememberSaveable { mutableStateOf(false) }
@@ -463,7 +691,7 @@ fun DockedPlayer(p: PlayerState, modifier: Modifier = Modifier) {
             // Side by side on a tablet, where the head is only as tall as its small cover.
             val actions = @Composable {
                 HeartButton(Likes.isLiked(song), 24.dp) { Likes.toggle(song) }
-                SongMenu(song, Color.White)
+                PlayerMenu(p, song)
             }
             if (tablet) Row { actions() } else Column { actions() }
         }
@@ -499,10 +727,10 @@ fun DockedPlayer(p: PlayerState, modifier: Modifier = Modifier) {
     val panel = @Composable { m: Modifier ->
         val l = lyrics.data
         when {
-            showQueue -> LazyColumn(m.then(fade), contentPadding = PaddingValues(vertical = 8.dp)) {
-                item("next") { QueueHeader(p, Modifier.padding(start = 16.dp, end = 4.dp), MaterialTheme.typography.titleSmall) }
-                if (p.upNext.isEmpty()) item { Hint("Nothing queued") }
-                queue(p, start = 16.dp, cover = 40.dp)
+            showQueue -> LazyColumn(m.then(fade), list, contentPadding = PaddingValues(vertical = 8.dp)) {
+                item("next") { QueueHeader(queue, Modifier.padding(start = 16.dp, end = 4.dp), MaterialTheme.typography.titleSmall) }
+                if (p.upNext.isEmpty() && !queue.history) item { Hint("Nothing queued") }
+                queue(queue, start = 16.dp, cover = 40.dp)
             }
             bigCover -> BoxWithConstraints(m.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 val side = minOf(maxWidth, maxHeight) - 32.dp

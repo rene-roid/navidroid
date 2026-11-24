@@ -144,7 +144,11 @@ import kotlinx.coroutines.withContext
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.material.icons.automirrored.rounded.Logout
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import xyz.yuuki.navidroid.GainMode
+import xyz.yuuki.navidroid.Playback
 import androidx.compose.material.icons.rounded.AllInclusive
+import androidx.compose.material.icons.rounded.NewReleases
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.Code
@@ -843,6 +847,8 @@ fun PlaybackSettingsScreen() {
     var wifi by remember { mutableIntStateOf(prefs.streamBitrateWifi) }
     var mobile by remember { mutableIntStateOf(prefs.streamBitrateMobile) }
     var autoplay by remember { mutableStateOf(prefs.autoplay) }
+    var fresh by remember { mutableStateOf(prefs.radioFresh) }
+    val gain by Playback.gain.collectAsStateWithLifecycle()
     SettingsPage("Playback") {
         item {
             Section("Streaming quality") {
@@ -856,6 +862,19 @@ fun PlaybackSettingsScreen() {
                     autoplay = it
                     prefs.autoplay = it
                 }
+                SwitchRow("New to you first", "Song radio and autoplay start with songs you haven't played yet", fresh, Icons.Rounded.NewReleases, Green) {
+                    fresh = it
+                    prefs.radioFresh = it
+                }
+            }
+        }
+        item {
+            Section("Volume") {
+                ChoiceRow(
+                    "ReplayGain", gain.ordinal,
+                    listOf("Off", "Track: every song as loud as the next", "Album: albums keep their quiet and loud songs").mapIndexed { i, label -> i to label },
+                    Icons.AutoMirrored.Rounded.VolumeUp, Green,
+                ) { Playback.setGain(GainMode.entries[it]) }
             }
         }
     }
