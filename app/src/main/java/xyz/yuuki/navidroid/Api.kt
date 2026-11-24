@@ -94,6 +94,9 @@ data class Album(
     val coverArt: String?, val year: Int, val songCount: Int, val playCount: Int, val starred: Boolean = false,
     val single: Boolean = false,
     val genre: String? = null,
+    /** Seconds in the whole album, and the server's ISO date for when it was added. */
+    val duration: Int = 0,
+    val created: String? = null,
 ) {
     companion object {
         fun from(o: JSONObject) = Album(
@@ -108,6 +111,8 @@ data class Album(
             starred = o.has("starred"),
             single = isSingle(o.optJSONArray("releaseTypes")?.let { t -> List(t.length()) { t.optString(it) } }.orEmpty(), o.optInt("songCount"), o.optInt("duration")),
             genre = o.s("genre"),
+            duration = o.optInt("duration"),
+            created = o.s("created"),
         )
 
         /** Tagged release type when there is one, otherwise Spotify's rule: up to 6 songs and under 30 minutes. */
@@ -372,6 +377,13 @@ class Prefs(account: String, open: (String) -> SharedPreferences) {
 
     /** Jams: the host's settings, as [JamSettings] JSON. */
     var jam by str("jam", device)
+
+    // Automatic downloads: switches, and the pins they added (the rest are the user's own)
+    var keepLiked by bool("keepLiked", false)
+    var keepMixes by bool("keepMixes", false)
+    var autoPins: List<String>
+        get() = p.getString("autoPins", null)?.split('\n')?.filter { it.isNotBlank() } ?: emptyList()
+        set(v) = p.edit().putString("autoPins", v.joinToString("\n")).apply()
 
     val loggedIn get() = token != null && endpoints.isNotEmpty()
 
@@ -919,6 +931,20 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
     /** Returns the new playlist's id. */
     suspend fun createPlaylist(name: String, songIds: List<String>): String? =
         call("createPlaylist", "name" to name, *songIds.map { "songId" to it }.toTypedArray()).optJSONObject("playlist")?.optString("id")
+
+    /** A link anyone can open, good for 30 days. The server says why when sharing is off or this user may not share. */
+    suspend fun share(id: String, title: String): String =
+        call("createShare", "id" to id, "description" to title, "expires" to System.currentTimeMillis() + 30L * 86_400_000)
+            .getJSONObject("shares").list("share").first().getString("url")
+
+    /** Plays are counted per album by the server; songs are read only for the 25 most played albums, to keep this to 26 requests. */
+    suspend fun stats(): Stats = coroutineScope {
+        val albums = albumList("frequent", 500)
+        val songs = albums.filter { it.playCount > 0 }.take(25)
+            .map { a -> async { runCatching { call("getAlbum", "id" to a.id).getJSONObject("album").list("song").map(Song::from) }.getOrDefault(emptyList()) } }
+            .awaitAll().flatten()
+        computeStats(albums, songs, java.util.Calendar.getInstance().get(java.util.Calendar.YEAR))
+    }
 
     // ---- scrobbling: also called for downloaded songs, so Navidrome's stats stay complete ----
 

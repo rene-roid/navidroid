@@ -62,6 +62,17 @@ data class Pin(val kind: Kind, val id: String) {
  * Liked Songs) are re-fetched on [sync]: new songs get downloaded and dropped ones get removed,
  * which keeps the rotating NaviBeat/Explo mixes current.
  */
+/** The mix kinds "Keep your daily mixes downloaded" covers. */
+val DAILY_MIX_KINDS = setOf("dailymix", "discovery", "onrepeat")
+
+/**
+ * Pins after the automatic-download switches [want] them: adds what is missing and drops what an earlier run added
+ * that is no longer wanted. [tracked] are the pins automation added, so a pin the user made by hand is never dropped.
+ * Returns the new pins and the new tracked list.
+ */
+fun autoPinPlan(pins: List<Pin>, tracked: List<Pin>, want: List<Pin>): Pair<List<Pin>, List<Pin>> =
+    ((pins - tracked.filter { it !in want }.toSet() + want).distinct()) to (tracked.filter { it in want } + want.filter { it !in pins }).distinct()
+
 class Offline(private val app: App) {
     // Media3's database has one list of downloads for the whole app, so every account but the first gets a database of its own.
     private val db: DatabaseProvider = if (app.account == DEFAULT_ACCOUNT) StandaloneDatabaseProvider(app) else
@@ -264,7 +275,22 @@ class Offline(private val app: App) {
         }
     }
 
+    /** Re-evaluated at every sync, so new daily mixes get kept and ones that went away stop being. */
+    private suspend fun applyAutoPins() {
+        val prefs = app.prefs
+        val want = mutableListOf<Pin>()
+        if (prefs.keepLiked) want += Pin(Kind.Liked, "liked")
+        // Unreachable server: leave the pins as they are rather than drop every mix.
+        if (prefs.keepMixes) want += (runCatching { app.api.playlists() }.getOrNull() ?: return).filter { it.mix?.kind in DAILY_MIX_KINDS }.map { Pin(Kind.Playlist, it.id) }
+        val tracked = prefs.autoPins.map(Pin::parse)
+        val (next, nextTracked) = autoPinPlan(pins.value, tracked, want)
+        (pins.value - next.toSet()).forEach { File(snapshots, "${it.kind}-${it.id}.json").delete() }
+        prefs.autoPins = nextTracked.map { it.toString() }
+        if (next != pins.value) setPins(next)
+    }
+
     private suspend fun doSync() {
+        applyAutoPins()
         val want = LinkedHashMap<String, Song>()
         var complete = true
         val collections = pins.value.mapNotNull { p ->

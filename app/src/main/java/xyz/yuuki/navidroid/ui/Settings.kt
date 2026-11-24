@@ -152,6 +152,9 @@ import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.BarChart
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.SignalCellularAlt
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.UnfoldMore
@@ -640,6 +643,7 @@ private val categories = listOf(
         Category("Library", Icons.Rounded.LibraryMusic, Color(0xFFF59E0B), Route.HiddenPlaylists) {
             Hidden.playlists.size.let { if (it == 0) "No hidden playlists" else "$it hidden playlists" }
         },
+        Category("Your stats", Icons.Rounded.BarChart, Color(0xFFE8115B), Route.Stats) { "Top artists, albums and songs, time listened" },
     ),
     listOf(
         Category("Server & connection", Icons.Rounded.Dns, Color(0xFF14B8A6), Route.Server) {
@@ -830,12 +834,20 @@ fun DownloadSettingsScreen() {
     val blue = Color(0xFF509BF5)
     var dl by remember { mutableIntStateOf(app.prefs.downloadBitrate) }
     var wifiOnly by remember { mutableStateOf(app.prefs.wifiOnlyDownloads) }
+    var keepLiked by remember { mutableStateOf(app.prefs.keepLiked) }
+    var keepMixes by remember { mutableStateOf(app.prefs.keepMixes) }
     val pins by app.offline.pins.collectAsStateWithLifecycle()
     SettingsPage("Downloads") {
         item {
             Section {
                 ChoiceRow("Download quality", dl, icon = Icons.Rounded.HighQuality, tint = blue) { dl = it; app.prefs.downloadBitrate = it; app.offline.sync() }
                 SwitchRow("Download on Wi-Fi only", "Pinned playlists wait for Wi-Fi", wifiOnly, Icons.Rounded.Wifi, blue) { wifiOnly = it; app.offline.setWifiOnly(it) }
+            }
+        }
+        item {
+            Section("Automatic") {
+                SwitchRow("Keep Liked Songs downloaded", "Songs you like are added at each sync", keepLiked, Icons.Rounded.Favorite, blue) { keepLiked = it; app.prefs.keepLiked = it; app.offline.sync() }
+                SwitchRow("Keep your daily mixes downloaded", "Daily Mixes, Discovery and On Repeat follow the server's new ones", keepMixes, Icons.Rounded.AutoAwesome, blue) { keepMixes = it; app.prefs.keepMixes = it; app.offline.sync() }
             }
         }
         item {

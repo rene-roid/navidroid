@@ -1049,6 +1049,7 @@ fun CollectionScreen(kind: Kind, id: String) {
                     if (canEdit) IconButton({ Selection.clear(); edit.start(c!!) }) { Icon(Icons.Rounded.Edit, "Edit playlist", Modifier.size(26.dp), tint = Sub) }
                     if (c != null && kind == Kind.Album) HeartButton(Likes.isLiked(c.id, c.starred)) { Likes.toggle(c.id, c.starred, "albumId") }
                     if (c != null && kind == Kind.Playlist) HeartButton(c.id in Likes.playlists) { Likes.togglePlaylist(c.id) }
+                    if (c != null && (kind == Kind.Album || kind == Kind.Playlist)) ShareMenu(c.id, c.title)
                     if (artistMix && c?.by != null) HeartButton(Likes.hasMix(kind, id)) { Likes.toggleMix(xyz.yuuki.navidroid.artistMixTile(kind, id, c.by, c.coverArt)) }
                     Spacer(Modifier.weight(1f))
                     if (c != null && (kind == Kind.Genre || kind == Kind.Decade)) IconButton({ player?.play(shuffledRadio(c.songs, App.it.prefs.radioFresh), from = "${c.title} Radio") }) {
