@@ -225,9 +225,9 @@ fun becauseShelf(byArtist: List<List<Album>>, recent: List<Album>): List<Album> 
 
 fun unplayedShelf(random: List<Album>) = random.filter { it.playCount == 0 }.take(12)
 
-/** Albums you do play, but not lately: [frequent] without anything in [recent], in a different order each time. */
+/** Albums you do play, but not just now: [frequent] without the 6 newest of [recent], in a different order each time. */
 fun jumpBackShelf(frequent: List<Album>, recent: List<Album>, rnd: kotlin.random.Random = kotlin.random.Random): List<Album> {
-    val seen = recent.map { it.id }.toSet()
+    val seen = recent.take(6).map { it.id }.toSet()
     return frequent.filter { it.playCount > 0 && it.id !in seen }.shuffled(rnd).take(10)
 }
 

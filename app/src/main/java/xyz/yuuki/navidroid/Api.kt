@@ -609,10 +609,14 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
     private suspend fun decade(start: Int) = albumsByYear(start + 9, start, 500)
 
     /** The decades from the 1970s that have albums, each with its newest album, for a card. */
-    suspend fun decades() = once("decades") {
-        coroutineScope {
-            (1970..2020 step 10).map { s -> async { s to runCatching { albumsByYear(s + 9, s, 1).firstOrNull() }.getOrNull() } }.awaitAll()
-        }.mapNotNull { (s, a) -> a?.let { s to (it.coverArt ?: "") } }
+    suspend fun decades(): List<Pair<Int, String>> {
+        // Remembered only when found: the first look runs from saved answers and finds none on a fresh install, and must not stick.
+        (memo["decades"] as List<Pair<Int, String>>?)?.let { return it }
+        return coroutineScope {
+            (1970..2020 step 10).map { s ->
+                async { s to runCatching { albumsByYear(s + 9, s, 1).firstOrNull() }.onFailure { android.util.Log.w("navidroid", "decade ${s}s: $it") }.getOrNull() }
+            }.awaitAll()
+        }.mapNotNull { (s, a) -> a?.let { s to (it.coverArt ?: "") } }.also { if (it.isNotEmpty()) memo["decades"] = it }
     }
 
     suspend fun artistAlbums(id: String) = call("getArtist", "id" to id).getJSONObject("artist").list("album").map(Album::from)

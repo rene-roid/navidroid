@@ -149,6 +149,7 @@ import xyz.yuuki.navidroid.LibType
 import xyz.yuuki.navidroid.creator
 import xyz.yuuki.navidroid.generatedSubtitle
 import xyz.yuuki.navidroid.libType
+import xyz.yuuki.navidroid.libraryPlaylist
 import xyz.yuuki.navidroid.libraryRows
 import xyz.yuuki.navidroid.visibleTypes
 import androidx.compose.runtime.saveable.Saver
@@ -798,7 +799,7 @@ fun LibraryScreen(column: Boolean = false) {
         }
         // Every album and artist on the server only under their own type; everywhere else just the saved ones.
         val rows = listOf(likedTile(null)) +
-            playlists.data.orEmpty().filter { it.id !in Hidden.playlists }.map { p -> p.tile().let { it.copy(subtitle = if (p.mix != null) generatedSubtitle(it) else "Playlist • ${p.owner}") } } +
+            playlists.data.orEmpty().filter { it.id !in Hidden.playlists }.map { p -> libraryPlaylist(p) } +
             Likes.mixes.map { it.copy(subtitle = generatedSubtitle(it)) } +
             (savedAlbums + if (filter.type == LibType.Albums) albums.filter { it.id !in savedAlbumIds } else emptyList()).map { it.tile().copy(subtitle = "Album • ${it.artist}") } +
             (savedArtists + if (filter.type == LibType.Artists) artists.data.orEmpty().filter { it.id !in savedArtistIds } else emptyList()).map { it.tile() }

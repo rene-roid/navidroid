@@ -28,6 +28,8 @@ class DiscoveryTest {
         val frequent = listOf(album("f1", 3), album("f2", 0), album("f3", 5), album("f4", 1))
         val shelf = jumpBackShelf(frequent, listOf(album("f3")), Random(1)).map { it.id }
         assertEquals(setOf("f1", "f4"), shelf.toSet())
+        // Only the 6 newest are left out, so a small library still has a shelf.
+        assertEquals(setOf("f1", "f4", "f3"), jumpBackShelf(frequent, listOf("x1", "x2", "x3", "x4", "x5", "x6", "f3").map { album(it) }).map { it.id }.toSet())
         assertEquals(10, jumpBackShelf((1..50).map { album("g$it", 1) }, emptyList()).size)
     }
 
