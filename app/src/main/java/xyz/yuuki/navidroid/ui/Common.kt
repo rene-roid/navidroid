@@ -52,6 +52,8 @@ import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Radio
+import androidx.compose.material.icons.rounded.Link
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.text.KeyboardActions
@@ -149,6 +151,7 @@ sealed interface Route {
     data class More(val section: String) : Route
     /** A Jam joined as a guest; [base] is its link. */
     data class Jam(val base: String) : Route
+    data object Stats : Route
 }
 
 class Nav {
@@ -193,6 +196,45 @@ fun invalidate(vararg keys: String) = keys.forEach { versions[it] = (versions[it
 fun playlistsChanged(id: String? = null) = invalidate("playlists", "home", *listOfNotNull(id?.let { "c:${Kind.Playlist}:$it" }).toTypedArray())
 
 fun toast(msg: String) = Toast.makeText(App.it, msg, Toast.LENGTH_SHORT).show()
+
+/** Makes a share link for [id], then opens the share sheet, or copies it when [copy]. A refusal (sharing off, no share role) is shown as the server worded it. */
+fun shareLink(scope: kotlinx.coroutines.CoroutineScope, id: String, title: String, copy: Boolean) = scope.launch {
+    try {
+        val url = App.it.api.share(id, title)
+        if (copy) {
+            App.it.getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText(title, url))
+            toast("Link copied")
+        } else App.it.startActivity(
+            android.content.Intent.createChooser(
+                android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                    .putExtra(android.content.Intent.EXTRA_SUBJECT, title).putExtra(android.content.Intent.EXTRA_TEXT, url),
+                null,
+            ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        toast("Couldn't share: ${e.message ?: "server refused"}")
+    }
+}
+
+/** The "Share link" and "Copy link" entries of a menu. */
+@Composable
+fun ShareItems(id: String, title: String, close: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    DropdownMenuItem({ Text("Share link") }, { close(); shareLink(scope, id, title, false) }, leadingIcon = { Icon(Icons.Rounded.Share, null) })
+    DropdownMenuItem({ Text("Copy link") }, { close(); shareLink(scope, id, title, true) }, leadingIcon = { Icon(Icons.Rounded.Link, null) })
+}
+
+/** A menu button for an album or playlist page. */
+@Composable
+fun ShareMenu(id: String, title: String) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton({ open = true }) { Icon(Icons.Rounded.MoreVert, "More", tint = Sub) }
+        DropdownMenu(open, { open = false }, containerColor = Elevated) { ShareItems(id, title) { open = false } }
+    }
+}
 
 class Load<T>(val data: T?, val error: String?, val loading: Boolean, val refresh: () -> Unit)
 
@@ -661,6 +703,7 @@ fun SongMenu(song: Song, tint: Color = Sub) {
             item("Add to playlist", Icons.AutoMirrored.Rounded.PlaylistAdd) { pick = true }
             song.albumId?.let { id -> item("Go to album", Icons.Rounded.Album) { nav.go(Route.Open(Kind.Album, id)) } }
             if (song.artistId != null) item("Go to artist", Icons.Rounded.Person) { goToArtist(song) }
+            ShareItems(song.id, song.title) { open = false }
         }
     }
     if (pick) AddToPlaylist(listOf(song)) { pick = false }

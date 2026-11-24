@@ -115,6 +115,7 @@ import xyz.yuuki.navidroid.ui.DownloadSettingsScreen
 import xyz.yuuki.navidroid.ui.ServerScreen
 import xyz.yuuki.navidroid.ui.StorageScreen
 import xyz.yuuki.navidroid.ui.AboutScreen
+import xyz.yuuki.navidroid.ui.StatsScreen
 import xyz.yuuki.navidroid.ui.forgetAccount
 import androidx.glance.appwidget.updateAll
 import androidx.compose.ui.input.pointer.pointerInput
@@ -290,6 +291,7 @@ private fun Shell(onLogout: () -> Unit, jamLink: String?, onJamOpened: () -> Uni
                                     Route.About -> AboutScreen()
                                     is Route.More -> MoreScreen(r.section)
                                     is Route.Jam -> JamScreen(r.base)
+                                    Route.Stats -> StatsScreen()
                                     is Route.Open -> if (r.kind == Kind.Artist) ArtistScreen(r.id) else CollectionScreen(r.kind, r.id)
                                 }
                             }
