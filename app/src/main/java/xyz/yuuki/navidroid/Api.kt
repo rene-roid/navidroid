@@ -128,13 +128,14 @@ data class Playlist(
     val songCount: Int, val duration: Int, val coverArt: String?,
     /** A Navidrome smart playlist (.nsp file): read-only, and the only kind that carries `validUntil`. */
     val smart: Boolean = false,
+    val isPublic: Boolean = false,
 ) {
     val mix: Mix? = parseMix(name, comment)
 
     companion object {
         fun from(o: JSONObject) = Playlist(
             o.getString("id"), o.s("name") ?: "", o.s("comment") ?: "", o.s("owner") ?: "",
-            o.optInt("songCount"), o.optInt("duration"), o.s("coverArt"), o.has("validUntil"),
+            o.optInt("songCount"), o.optInt("duration"), o.s("coverArt"), o.has("validUntil"), o.optBoolean("public"),
         )
     }
 }
@@ -152,8 +153,12 @@ data class Collection(
     val year: Int = 0,
     val artistId: String? = null,
     val starred: Boolean = false,
+    val isPublic: Boolean = false,
 ) {
     val duration get() = songs.sumOf { it.duration }
+
+    /** A playlist [user] made by hand, as opposed to a generated mix or someone else's. */
+    fun editableBy(user: String?) = kind == Kind.Playlist && mix == null && by == user && user != null
 
     fun toJson(): JSONObject = JSONObject()
         .put("kind", kind.name).put("id", id).put("title", title).put("description", description)
@@ -170,9 +175,34 @@ data class Collection(
 
         fun of(p: Playlist, songs: List<Song>) = Collection(
             Kind.Playlist, p.id, p.mix?.title ?: p.name, p.mix?.description ?: p.comment.ifBlank { null },
-            p.mix?.by ?: p.owner, p.coverArt, songs, p.mix,
+            p.mix?.by ?: p.owner, p.coverArt, songs, p.mix, isPublic = p.isPublic,
         )
     }
+}
+
+/** What the edit screen holds for a playlist: [songs] in their new order, with the dropped ones gone. */
+data class EditDraft(val name: String, val comment: String, val isPublic: Boolean, val songs: List<Song>)
+
+/** [removed]: indexes in the original order; [rewrite]: the full new song ids when the order changed, which makes [removed] moot. */
+data class EditPlan(val removed: List<Int>, val rewrite: List<String>?)
+
+fun editPlan(original: List<Song>, draft: EditDraft): EditPlan {
+    // Matching by id from the front is exact even with repeats, as equal ids are interchangeable.
+    val left = draft.songs.groupingBy { it.id }.eachCount().toMutableMap()
+    val removed = original.indices.filter { i ->
+        val n = left[original[i].id] ?: 0
+        left[original[i].id] = n - 1
+        n <= 0
+    }
+    val kept = original.filterIndexed { i, _ -> i !in removed }.map { it.id }
+    val order = draft.songs.map { it.id }
+    return if (kept == order) EditPlan(removed, null) else EditPlan(emptyList(), order)
+}
+
+/** Songs of [songs] not in [existing], then those already in it. */
+fun splitDuplicates(existing: List<Song>, songs: List<Song>): Pair<List<Song>, List<Song>> {
+    val ids = existing.map { it.id }.toSet()
+    return songs.partition { it.id !in ids }
 }
 
 /** [songs]: every song found crediting them, on their releases or anyone else's. */
@@ -855,6 +885,21 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
 
     suspend fun addToPlaylist(playlistId: String, songIds: List<String>) {
         call("updatePlaylist", "playlistId" to playlistId, *songIds.map { "songIdToAdd" to it }.toTypedArray())
+    }
+
+    /** Applies [draft] to playlist [id] the way [editPlan] says; one updatePlaylist call carries the rest. */
+    suspend fun editPlaylist(id: String, original: List<Song>, draft: EditDraft) {
+        val plan = editPlan(original, draft)
+        // createPlaylist with an id replaces that playlist's songs and keeps its name and visibility.
+        plan.rewrite?.let { ids -> call("createPlaylist", "playlistId" to id, *ids.map { "songId" to it }.toTypedArray()) }
+        call(
+            "updatePlaylist", "playlistId" to id, "name" to draft.name.trim(), "comment" to draft.comment.trim(), "public" to draft.isPublic,
+            *plan.removed.map { "songIndexToRemove" to it }.toTypedArray(),
+        )
+    }
+
+    suspend fun deletePlaylist(id: String) {
+        call("deletePlaylist", "id" to id)
     }
 
     /** Returns the new playlist's id. */
