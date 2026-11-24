@@ -197,6 +197,9 @@ fun artistNames(credit: String): List<String> =
 /** Credited together with someone else, not to [artistId] alone. */
 fun Song.withOthers(artistId: String) = if (artists.isNotEmpty()) artists.any { it.first != artistId } else artistNames(artist).size > 1
 
+/** Newest like first, like Spotify, whatever order the server lists them in. */
+fun likedSongs(starred: JSONObject) = starred.list("song").sortedByDescending { it.s("starred") }.map(Song::from)
+
 /** One of [own], then two of [others], and so on; once either runs out, the rest of the other follows. */
 fun <T> interleave(own: List<T>, others: List<T>): List<T> {
     val a = own.iterator()
@@ -495,8 +498,7 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
                     val a = Album.from(it)
                     Collection(Kind.Album, id, a.name, null, a.artist, a.coverArt, it.list("song").map(Song::from), year = a.year, artistId = a.artistId, starred = a.starred)
                 }
-                Kind.Liked -> Collection(Kind.Liked, "liked", "Liked Songs", null, prefs.username, null,
-                    starred().list("song").map(Song::from).reversed())
+                Kind.Liked -> Collection(Kind.Liked, "liked", "Liked Songs", null, prefs.username, null, likedSongs(starred()))
                 Kind.Genre -> Collection(Kind.Genre, id, id, null, null, runCatching { genreCover(id) }.getOrNull(),
                     call("getSongsByGenre", "genre" to id, "count" to 500).getJSONObject("songsByGenre").list("song").map(Song::from))
                 Kind.ArtistMix, Kind.ArtistRadio -> artist(id).let { p ->
