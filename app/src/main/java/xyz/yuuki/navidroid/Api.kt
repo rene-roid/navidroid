@@ -192,7 +192,13 @@ data class Recent(val kind: Kind?, val id: String, val title: String, val subtit
             o.s("kind")?.let(Kind::valueOf), o.getString("id"), o.getString("title"), o.optString("subtitle"), o.s("coverArt"), o.optJSONObject("song")?.let(Song::from),
         )
 
-        fun of(s: Song) = Recent(null, s.id, s.title, "Song • ${s.artist}", s.coverArt, s)
+        /** [h]: a search hit, so a [Genre], [Artist], [Album] or [Song]. */
+        fun of(h: Any) = when (h) {
+            is Genre -> Recent(Kind.Genre, h.name, h.name, "Genre", null)
+            is Artist -> Recent(Kind.Artist, h.id, h.name, "Artist", h.coverArt)
+            is Album -> Recent(Kind.Album, h.id, h.name, "Album • ${h.artist}", h.coverArt)
+            else -> (h as Song).let { Recent(null, it.id, it.title, "Song • ${it.artist}", it.coverArt, it) }
+        }
 
         /** [r] put first in [list], which keeps one entry per thing and the newest 15. */
         fun add(list: List<Recent>, r: Recent) = (listOf(r) + list.filterNot { it.kind == r.kind && it.id == r.id }).take(15)

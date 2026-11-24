@@ -51,6 +51,7 @@ import androidx.compose.material.icons.rounded.DownloadForOffline
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Shuffle
@@ -60,6 +61,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -129,6 +131,7 @@ import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.exoplayer.offline.Download
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -162,6 +165,8 @@ import xyz.yuuki.navidroid.Collection
 import xyz.yuuki.navidroid.Home
 import xyz.yuuki.navidroid.Kind
 import xyz.yuuki.navidroid.Pin
+import xyz.yuuki.navidroid.Recent
+import xyz.yuuki.navidroid.Song
 import xyz.yuuki.navidroid.Tile
 import xyz.yuuki.navidroid.buildHome
 import xyz.yuuki.navidroid.likedTile
@@ -328,10 +333,18 @@ fun BackTitle(title: String) = Row(Modifier.statusBarsPadding().padding(vertical
 
 // ---- search ---------------------------------------------------------------------------------
 
+/** Albums never played, for the Search tab. Kept while the app runs, so the shelf doesn't change at every visit. */
+private var discover by mutableStateOf<List<xyz.yuuki.navidroid.Album>?>(null)
+
+private suspend fun loadDiscover() {
+    runCatching { api.albumList("random", 40).filter { it.playCount == 0 }.take(12) }.onSuccess { discover = it }
+}
+
 @Composable
 fun SearchScreen() {
     val nav = LocalNav.current
     val player = LocalPlayer.current
+    val scope = rememberCoroutineScope()
     var field by rememberSaveable(stateSaver = androidx.compose.ui.text.input.TextFieldValue.Saver) { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue()) }
     val q = field.text
     // Focusing the box selects what's there so typing replaces it. The tap that focuses it then
@@ -340,13 +353,50 @@ fun SearchScreen() {
     fun selectAll(v: androidx.compose.ui.text.input.TextFieldValue) = v.copy(selection = androidx.compose.ui.text.TextRange(0, v.text.length))
     var result by remember { mutableStateOf<xyz.yuuki.navidroid.SearchResult?>(null) }
     var searched by remember { mutableStateOf("") }
+    var searching by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf(false) }
+    var tab by rememberSaveable { mutableStateOf("All") }
     LaunchedEffect(q) {
-        if (q.isBlank()) return@LaunchedEffect run { result = null }
+        failed = false
+        searching = q.isNotBlank()
+        // Typing on narrows what is already shown; any other change starts from nothing.
+        if (q.isBlank() || !q.startsWith(searched)) result = null
+        if (q.isBlank()) return@LaunchedEffect
         delay(250)
-        result = runCatching { api.search(q.trim()) }.getOrNull()
-        searched = q
+        try {
+            result = api.search(q.trim())
+            searched = q
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            result = null
+            failed = true
+        }
+        searching = false
     }
     val genres = rememberLoad("genres") { api.genres() }
+    LaunchedEffect(Unit) { if (discover == null) loadDiscover() }
+    var recents by remember { mutableStateOf(App.it.prefs.recentSearches) }
+    fun save(v: List<Recent>) {
+        recents = v
+        App.it.prefs.recentSearches = v
+    }
+    /** A song starts its radio; anything else opens its page, or with [play] starts playing. */
+    fun open(r: Recent, play: Boolean = false) {
+        save(Recent.add(recents, r))
+        val kind = r.kind
+        when {
+            r.song != null -> player?.playRadio(r.song)
+            kind == null -> {}
+            !play -> nav.go(Route.Open(kind, r.id))
+            else -> scope.launch {
+                runCatching {
+                    if (kind == Kind.Artist) api.artist(r.id).let { a -> player?.play(a.top.ifEmpty { api.artistSongs(a) }, from = r.title) }
+                    else player?.play(api.collection(kind, r.id).songs, shuffled = kind == Kind.Genre, from = r.title)
+                }
+            }
+        }
+    }
     // Tapping the Search tab again jumps into the search box.
     val focus = remember { androidx.compose.ui.focus.FocusRequester() }
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
@@ -360,8 +410,9 @@ fun SearchScreen() {
     val imeVisible = androidx.compose.foundation.layout.WindowInsets.isImeVisible
     LaunchedEffect(imeVisible) { if (!imeVisible) focusManager.clearFocus() }
 
+    val wide = GridItemSpan(2)
     LazyVerticalGrid(GridCells.Fixed(2), Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item(span = { GridItemSpan(maxLineSpan) }) {
+        item(span = { wide }) {
             Column(Modifier.statusBarsPadding()) {
                 Text("Search", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(vertical = 12.dp))
                 Row(
@@ -385,36 +436,127 @@ fun SearchScreen() {
                     }
                     if (q.isNotEmpty()) IconButton({ field = androidx.compose.ui.text.input.TextFieldValue() }) { Icon(Icons.Rounded.Close, "Clear", tint = Color.Black) }
                 }
-            }
-        }
-        val r = result
-        if (q.isBlank()) {
-            item(span = { GridItemSpan(maxLineSpan) }) { Text("Browse all", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 12.dp)) }
-            items(genres.data.orEmpty().take(60), key = { it.name }) { GenreCard(it) }
-        } else {
-            val genreHits = genres.data.orEmpty().filter { it.name.contains(q.trim(), ignoreCase = true) }.take(4)
-            val hits = rankHits(q, genreHits, r?.artists.orEmpty(), r?.albums.orEmpty(), r?.songs.orEmpty())
-            if (r != null && searched == q && hits.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
-                Text("No results for \"${q.trim()}\"", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 24.dp))
-            }
-            items(hits, key = { hitKey(it) }, span = { GridItemSpan(maxLineSpan) }) { h ->
-                when (h) {
-                    is xyz.yuuki.navidroid.Genre -> ListRow(h.name, "Genre", { GenreThumb(h.name) }) { nav.go(Route.Open(Kind.Genre, h.name)) }
-                    is xyz.yuuki.navidroid.Artist -> ListRow(h.name, "Artist", { Cover(h.coverArt, 120, Modifier.size(48.dp), CircleShape) }, pick = h.tile()) { nav.go(Route.Open(Kind.Artist, h.id)) }
-                    is xyz.yuuki.navidroid.Album -> ListRow(h.name, "Album • ${h.artist}", { Cover(h.coverArt, 120, Modifier.size(48.dp)) }, pick = h.tile()) { nav.go(Route.Open(Kind.Album, h.id)) }
-                    is xyz.yuuki.navidroid.Song -> TrackRow(h, { player?.play(listOf(h), from = "Search") }, inset = 0.dp)
+                // Always takes its room, so results don't jump when a search starts or ends.
+                Box(Modifier.padding(top = 6.dp).fillMaxWidth().height(2.dp)) {
+                    if (searching) LinearProgressIndicator(Modifier.fillMaxSize(), color = Accent, trackColor = Color.Transparent)
                 }
             }
         }
-        item(span = { GridItemSpan(maxLineSpan) }) { BottomSpacer() }
+        if (q.isBlank()) {
+            if (recents.isNotEmpty()) {
+                item(span = { wide }) { SearchHeader("Recent searches") { TextButton({ save(emptyList()) }) { Text("Clear all", color = Sub) } } }
+                items(recents, key = { "recent:${it.key}" }, span = { wide }) { r ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.weight(1f)) { ListRow(r.title, r.subtitle, { HitCover(r) }) { open(r) } }
+                        IconButton({ save(recents - r) }) { Icon(Icons.Rounded.Close, "Remove", tint = Sub) }
+                    }
+                }
+            }
+            item(span = { wide }) {
+                Column {
+                    val albums = discover.orEmpty()
+                    if (albums.isNotEmpty()) {
+                        SearchHeader("Discover") { IconButton({ scope.launch { loadDiscover() } }) { Icon(Icons.Rounded.Refresh, "Other albums", tint = Sub) } }
+                        Text("Albums you haven't played yet", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 6.dp))
+                        LazyRow { items(albums, key = { it.id }) { a -> ShelfCard(Recent.of(a)) { nav.go(Route.Open(Kind.Album, a.id)) } } }
+                    }
+                    Row(
+                        Modifier.padding(top = 12.dp).clip(CircleShape).background(Tile)
+                            .clickable { scope.launch { runCatching { player?.play(api.randomSongs(100), from = "Your library") } } }.padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(Icons.Rounded.Shuffle, null, Modifier.size(20.dp))
+                        Text("Shuffle your library", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            }
+            item(span = { wide }) { SearchHeader("Browse all") }
+            items(genres.data.orEmpty().take(60), key = { it.name }) { GenreCard(it) { nav.go(Route.Open(Kind.Genre, it.name)) } }
+        } else {
+            val r = result
+            val genreHits = rankHits(q, genres.data.orEmpty().filter { it.name.contains(q.trim(), ignoreCase = true) })
+            val songs = rankHits(q, r?.songs.orEmpty())
+            val artists = rankHits(q, r?.artists.orEmpty())
+            val albums = rankHits(q, r?.albums.orEmpty())
+            val lists = mapOf("Songs" to songs, "Artists" to artists, "Albums" to albums, "Genres" to genreHits).filterValues { it.isNotEmpty() }
+            val shown = tab.takeIf { it in lists } ?: "All"
+            if (lists.isNotEmpty()) item(span = { wide }) {
+                val chipColors = FilterChipDefaults.filterChipColors(containerColor = Tile, labelColor = Color.White, selectedContainerColor = Accent, selectedLabelColor = OnAccent)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    (listOf("All") + lists.keys).forEach { t ->
+                        FilterChip(shown == t, { tab = t }, { Text(t, maxLines = 1, softWrap = false) }, shape = RoundedCornerShape(32.dp), border = null, colors = chipColors)
+                    }
+                }
+            }
+            if (failed || (lists.isEmpty() && r != null && !searching)) item(span = { wide }) {
+                Text(
+                    if (failed) "Couldn't search, check your connection" else "No results for \"${q.trim()}\"",
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 24.dp),
+                )
+            }
+            if (shown == "Genres") items(genreHits.map(Recent::of), key = { it.key }) { g -> GenreCard(xyz.yuuki.navidroid.Genre(g.id, 0)) { open(g) } }
+            else if (shown != "All") items(lists.getValue(shown).map(Recent::of), key = { it.key }, span = { wide }) { h -> HitRow(h) { open(h) } }
+            else if (lists.isNotEmpty()) {
+                val top = Recent.of(rankHits(q, genreHits.take(4), artists, albums, songs).first())
+                item(span = { wide }) {
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Tile).clickable { open(top) }.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        HitCover(top, 92.dp)
+                        Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
+                            Text("Top result", style = MaterialTheme.typography.labelMedium, color = Sub)
+                            Text(top.title, style = MaterialTheme.typography.headlineSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(top.subtitle, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        PlayButton(false, 48.dp) { open(top, play = true) }
+                    }
+                }
+                if (songs.isNotEmpty()) {
+                    item(span = { wide }) { SearchHeader("Songs") { if (songs.size > 4) TextButton({ tab = "Songs" }) { Text("See all", color = Sub) } } }
+                    items(songs.take(4).map(Recent::of), key = { it.key }, span = { wide }) { h -> HitRow(h) { open(h) } }
+                }
+                for ((title, list) in listOf("Artists" to artists, "Albums" to albums)) if (list.isNotEmpty()) item(span = { wide }) {
+                    Column {
+                        SearchHeader(title)
+                        LazyRow { items(list.map(Recent::of), key = { it.key }) { h -> ShelfCard(h) { open(h) } } }
+                    }
+                }
+            }
+        }
+        item(span = { wide }) { BottomSpacer() }
     }
 }
 
-private fun hitKey(h: Any) = when (h) {
-    is xyz.yuuki.navidroid.Genre -> "g" + h.name
-    is xyz.yuuki.navidroid.Artist -> "ar" + h.id
-    is xyz.yuuki.navidroid.Album -> "al" + h.id
-    else -> "s" + (h as xyz.yuuki.navidroid.Song).id
+private val Recent.key get() = "$kind:$id"
+
+/** For pressing and holding to select; songs and genres have their own ways. */
+private fun Recent.tile() = if (kind == Kind.Album || kind == Kind.Artist) Tile(kind, id, title, subtitle, coverArt) else null
+
+@Composable
+private fun SearchHeader(title: String, trailing: @Composable () -> Unit = {}) = Row(Modifier.fillMaxWidth().heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
+    Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+    trailing()
+}
+
+@Composable
+private fun HitCover(r: Recent, size: Dp = 48.dp) {
+    val art = if (r.kind != Kind.Genre) r.coverArt else androidx.compose.runtime.produceState<String?>(null, r.id) { value = runCatching { api.genreCover(r.id) }.getOrNull() }.value
+    Cover(art, if (size > 48.dp) 300 else 120, Modifier.size(size), if (r.kind == Kind.Artist) CircleShape else RoundedCornerShape(4.dp))
+}
+
+@Composable
+private fun HitRow(r: Recent, onClick: () -> Unit) =
+    if (r.song != null) TrackRow(r.song, onClick, inset = 0.dp) else ListRow(r.title, r.subtitle, { HitCover(r) }, pick = r.tile(), onClick = onClick)
+
+/** An album or artist in a sideways row. */
+@Composable
+private fun ShelfCard(r: Recent, onClick: () -> Unit) = Column(
+    Modifier.width(132.dp).clip(RoundedCornerShape(6.dp)).then(r.tile()?.let { Modifier.pickable(it, onClick) } ?: Modifier.clickable(onClick = onClick)).padding(6.dp),
+) {
+    HitCover(r, 120.dp)
+    Text(r.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
+    Text(r.subtitle, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
 }
 
 /**
@@ -446,17 +588,10 @@ fun rankHits(q: String, vararg kinds: List<Any>): List<Any> {
 }
 
 @Composable
-private fun GenreThumb(name: String) {
-    val art by androidx.compose.runtime.produceState<String?>(null, name) { value = runCatching { api.genreCover(name) }.getOrNull() }
-    Cover(art, 120, Modifier.size(48.dp))
-}
-
-@Composable
-private fun GenreCard(g: xyz.yuuki.navidroid.Genre) {
-    val nav = LocalNav.current
+private fun GenreCard(g: xyz.yuuki.navidroid.Genre, onClick: () -> Unit) {
     val art by androidx.compose.runtime.produceState<String?>(null, g.name) { value = runCatching { api.genreCover(g.name) }.getOrNull() }
     val bg = rememberGenreTint(g.name, art)
-    Box(Modifier.height(100.dp).clip(RoundedCornerShape(8.dp)).background(bg).clickable { nav.go(Route.Open(Kind.Genre, g.name)) }) {
+    Box(Modifier.height(100.dp).clip(RoundedCornerShape(8.dp)).background(bg).clickable(onClick = onClick)) {
         // The cover again, blurred behind a wash that is solid under the title and thins out towards the art.
         if (art != null) Cover(art, 300, Modifier.fillMaxSize().scale(1.3f).blur(10.dp), RoundedCornerShape(0.dp))
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(bg.copy(alpha = 0.92f), bg.copy(alpha = 0.6f), Color.Transparent))))
