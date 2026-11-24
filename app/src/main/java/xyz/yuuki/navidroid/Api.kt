@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -51,13 +52,14 @@ data class Song(
     val bitRate: Int,
     /** Every credited artist as (id, name), when the server lists them. */
     val artists: List<Pair<String, String>> = emptyList(),
+    val genre: String? = null,
 ) {
     /** Same field names as the Subsonic response, so [from] reads both API and saved JSON. */
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("title", title).put("artist", artist).put("artistId", artistId)
         .put("album", album).put("albumId", albumId).put("coverArt", coverArt)
         .put("duration", duration).put("track", track).put("year", year)
-        .put("suffix", suffix).put("bitRate", bitRate)
+        .put("suffix", suffix).put("bitRate", bitRate).put("genre", genre)
         .put("artists", JSONArray(artists.map { JSONObject().put("id", it.first).put("name", it.second) }))
         .apply { if (starred) put("starred", "1") }
 
@@ -77,6 +79,7 @@ data class Song(
             suffix = o.s("suffix"),
             bitRate = o.optInt("bitRate"),
             artists = o.optJSONArray("artists").objects().mapNotNull { a -> a.s("id")?.let { it to (a.s("name") ?: "") } },
+            genre = o.s("genre"),
         )
     }
 }
@@ -173,6 +176,35 @@ data class ArtistPage(val artist: Artist, val albums: List<Album>, val top: List
 }
 data class SearchResult(val artists: List<Artist>, val albums: List<Album>, val songs: List<Song>)
 data class Genre(val name: String, val songCount: Int)
+/** Someone playing from the server right now, as `getNowPlaying` lists them. */
+data class Listener(val user: String, val player: String, val minutesAgo: Int, val song: Song) {
+    companion object {
+        fun from(o: JSONObject) = Listener(o.s("username") ?: "", o.s("playerName") ?: "", o.optInt("minutesAgo"), Song.from(o))
+    }
+}
+
+/** Something opened or played from search. [song] is there for a song, which plays; the rest open their [kind] of page. */
+data class Recent(val kind: Kind?, val id: String, val title: String, val subtitle: String, val coverArt: String?, val song: Song? = null) {
+    fun toJson(): JSONObject = JSONObject().put("kind", kind?.name).put("id", id).put("title", title).put("subtitle", subtitle)
+        .put("coverArt", coverArt).put("song", song?.toJson())
+
+    companion object {
+        fun from(o: JSONObject) = Recent(
+            o.s("kind")?.let(Kind::valueOf), o.getString("id"), o.getString("title"), o.optString("subtitle"), o.s("coverArt"), o.optJSONObject("song")?.let(Song::from),
+        )
+
+        /** [h]: a search hit, so a [Genre], [Artist], [Album] or [Song]. */
+        fun of(h: Any) = when (h) {
+            is Genre -> Recent(Kind.Genre, h.name, h.name, "Genre", null)
+            is Artist -> Recent(Kind.Artist, h.id, h.name, "Artist", h.coverArt)
+            is Album -> Recent(Kind.Album, h.id, h.name, "Album • ${h.artist}", h.coverArt)
+            else -> (h as Song).let { Recent(null, it.id, it.title, "Song • ${it.artist}", it.coverArt, it) }
+        }
+
+        /** [r] put first in [list], which keeps one entry per thing and the newest 15. */
+        fun add(list: List<Recent>, r: Recent) = (listOf(r) + list.filterNot { it.kind == r.kind && it.id == r.id }).take(15)
+    }
+}
 data class LyricLine(val ms: Long, val text: String)
 data class Lyrics(val synced: Boolean, val lines: List<LyricLine>)
 
@@ -197,6 +229,9 @@ fun artistNames(credit: String): List<String> =
 /** Credited together with someone else, not to [artistId] alone. */
 fun Song.withOthers(artistId: String) = if (artists.isNotEmpty()) artists.any { it.first != artistId } else artistNames(artist).size > 1
 
+/** Newest like first, like Spotify, whatever order the server lists them in. */
+fun likedSongs(starred: JSONObject) = starred.list("song").sortedByDescending { it.s("starred") }.map(Song::from)
+
 /** One of [own], then two of [others], and so on; once either runs out, the rest of the other follows. */
 fun <T> interleave(own: List<T>, others: List<T>): List<T> {
     val a = own.iterator()
@@ -207,6 +242,16 @@ fun <T> interleave(own: List<T>, others: List<T>): List<T> {
             repeat(2) { if (b.hasNext()) add(b.next()) }
         }
     }
+}
+
+/**
+ * A song radio out of its [sources], the best first: no repeats, never [seed] or anything in [exclude],
+ * and the seed's own artist only every third song while there are others to put between.
+ */
+fun radioMix(seed: Song, sources: List<List<Song>>, exclude: Set<String> = emptySet(), limit: Int = 40): List<Song> {
+    val (own, others) = sources.flatten().filter { it.id != seed.id && it.id !in exclude }.distinctBy { it.id }
+        .partition { seed.artistId != null && it.artistId == seed.artistId }
+    return interleave(own, others).take(limit)
 }
 
 // ---- settings -------------------------------------------------------------------------------
@@ -232,7 +277,12 @@ class Prefs(ctx: Context) {
     var auroraBrightness by int("auroraBrightness", 100)
     var accent by int("accent", 0xFF0085FF.toInt())
     var lastSync by long("lastSync")
-    var autoplay by bool("autoplay", false)
+    var autoplay by bool("autoplay", true)
+
+    /** What was opened or played from search, newest first. */
+    var recentSearches: List<Recent>
+        get() = p.getString("recentSearches", null)?.let(::JSONArray).objects().map(Recent::from)
+        set(v) = p.edit().putString("recentSearches", JSONArray(v.map { it.toJson() }).toString()).apply()
 
     /** Playlist ids saved to the library; Subsonic can't star playlists, so they live here. */
     var savedPlaylists: Set<String>
@@ -242,6 +292,10 @@ class Prefs(ctx: Context) {
     var hiddenPlaylists: Set<String>
         get() = p.getStringSet("hiddenPlaylists", null) ?: emptySet()
         set(v) = p.edit().putStringSet("hiddenPlaylists", v).apply()
+
+    var librarySort by int("librarySort", 0)
+    var libraryGrid by bool("libraryGrid", false)
+    var libraryMixes by bool("libraryMixes", true)
 
     /** Artist mixes and radios saved to the library; they're made on the phone, so they live here too. */
     var savedMixes: List<Tile>
@@ -299,14 +353,58 @@ fun normalizeEndpoint(input: String): String {
     return u.toHttpUrlOrNull()?.toString()?.trimEnd('/') ?: u
 }
 
+/** What answers at an address, asked without credentials. */
+sealed interface Probe {
+    data class Found(val type: String, val version: String, val openSubsonic: Boolean) : Probe {
+        /** "Navidrome 0.64.2". */
+        val name get() = "${type.replaceFirstChar { it.uppercase() }} $version".trim()
+    }
+    data object NotSubsonic : Probe
+    data class Unreachable(val reason: String) : Probe
+}
+
+/** Reads the answer to a ping sent without credentials: the server refuses it, and says what it is while doing so. */
+fun parseProbe(body: String): Probe {
+    val r = runCatching { JSONObject(body).optJSONObject("subsonic-response") }.getOrNull()
+        // Servers too old to know f=json answer in XML.
+        ?: return if ("<subsonic-response" in body) Probe.Found("subsonic", "", false) else Probe.NotSubsonic
+    // Navidrome adds its build after the version: "0.64.2 (10114574)".
+    return Probe.Found(r.s("type") ?: "subsonic", r.s("serverVersion")?.substringBefore(' ') ?: "", r.optBoolean("openSubsonic"))
+}
+
+/** Why a request never got an answer, in words for the person typing the address. */
+fun networkReason(e: Throwable) = when (e) {
+    is java.net.UnknownHostException -> "address not found (DNS)"
+    is javax.net.ssl.SSLException -> "the secure connection failed (TLS)"
+    // Before InterruptedIOException: a socket timeout is one.
+    is java.net.SocketTimeoutException -> "timed out"
+    is java.net.ConnectException -> "connection refused"
+    is java.net.UnknownServiceException -> "plain http is blocked, use https"
+    is java.io.InterruptedIOException -> "timed out"
+    else -> e.message ?: "network error"
+}
+
+/**
+ * Probes what was typed and returns the address that answered. Without a scheme it is tried over https and then
+ * http, as a server on the home network rarely has a certificate.
+ */
+fun probeAddress(input: String): Pair<String, Probe> {
+    val ep = normalizeEndpoint(input)
+    val first = Api.probe(ep)
+    if (first is Probe.Found || "://" in input) return ep to first
+    val plain = "http" + ep.removePrefix("https")
+    val second = Api.probe(plain)
+    return if (second is Probe.Found) plain to second else ep to first
+}
+
 fun md5(s: String): String = MessageDigest.getInstance("MD5").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
 
 // ---- client ---------------------------------------------------------------------------------
 
 /**
  * Subsonic client over several endpoints of the same server (LAN address, public domain, ...).
- * All endpoints are pinged in parallel and the first to answer becomes [active]; any network
- * failure re-runs that race, so moving between Wi-Fi and mobile data just picks the next one.
+ * All endpoints are pinged in parallel and the first to answer becomes [active], the first of the list
+ * winning a close call; any network failure re-runs that race, so moving between Wi-Fi and mobile data just picks the next one.
  */
 class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
     val http: OkHttpClient = OkHttpClient.Builder()
@@ -384,11 +482,17 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
         val eps = prefs.endpoints
         if (eps.isEmpty()) return null
         val winner = CompletableDeferred<String?>()
+        // The first address is the preferred one: a faster other gives it a moment to answer too.
+        val preferred = CompletableDeferred<Unit>()
         var left = eps.size
         for (ep in eps) scope.launch(Dispatchers.IO) {
             val ms = ping(ep)
             latency.update { it + (ep to ms) }
-            if (ms != null) winner.complete(ep)
+            if (ms != null) {
+                if (ep != eps[0]) withTimeoutOrNull(400) { preferred.await() }
+                winner.complete(ep)
+            }
+            if (ep == eps[0]) preferred.complete(Unit)
             if (synchronized(winner) { --left } == 0) winner.complete(null)
         }
         val w = winner.await()
@@ -495,8 +599,7 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
                     val a = Album.from(it)
                     Collection(Kind.Album, id, a.name, null, a.artist, a.coverArt, it.list("song").map(Song::from), year = a.year, artistId = a.artistId, starred = a.starred)
                 }
-                Kind.Liked -> Collection(Kind.Liked, "liked", "Liked Songs", null, prefs.username, null,
-                    starred().list("song").map(Song::from).reversed())
+                Kind.Liked -> Collection(Kind.Liked, "liked", "Liked Songs", null, prefs.username, null, likedSongs(starred()))
                 Kind.Genre -> Collection(Kind.Genre, id, id, null, null, runCatching { genreCover(id) }.getOrNull(),
                     call("getSongsByGenre", "genre" to id, "count" to 500).getJSONObject("songsByGenre").list("song").map(Song::from))
                 Kind.ArtistMix, Kind.ArtistRadio -> artist(id).let { p ->
@@ -626,8 +729,44 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
             .shuffled().take(20)
     }
 
+    /** Everyone the server says is playing; servers that keep this to admins answer with an error, so callers treat a failure as nobody. */
+    suspend fun listeners() = call("getNowPlaying").optJSONObject("nowPlaying")?.list("entry").orEmpty().map(Listener::from)
+
+    private suspend fun songs(method: String, key: String, vararg params: Pair<String, Any?>) =
+        call(method, *params).optJSONObject(key)?.list("song")?.map(Song::from).orEmpty()
+
+    suspend fun randomSongs(size: Int) = songs("getRandomSongs", "randomSongs", "size" to size)
+
+    /**
+     * Up to 40 songs to follow [seed]. Asks for more only while the mix is short or mostly the seed's own artist:
+     * songs like it, then the top songs of artists like its artist, then its genre, then the rest of its artist.
+     */
+    suspend fun songRadio(seed: Song, exclude: Set<String> = emptySet()): List<Song> {
+        val sources = mutableListOf<List<Song>>()
+        val loaders = listOf<suspend () -> List<Song>>(
+            { songs("getSimilarSongs2", "similarSongs2", "id" to seed.id, "count" to 50) },
+            {
+                val alike = seed.artistId?.let { call("getArtistInfo2", "id" to it, "count" to 8).optJSONObject("artistInfo2")?.list("similarArtist") }.orEmpty()
+                coroutineScope {
+                    alike.map { a -> async { runCatching { songs("getTopSongs", "topSongs", "artist" to a.s("name"), "count" to 5) }.getOrDefault(emptyList()) } }.awaitAll()
+                }.flatten().shuffled()
+            },
+            { seed.genre?.let { songs("getRandomSongs", "randomSongs", "size" to 40, "genre" to it) }.orEmpty() },
+            {
+                songs("search3", "searchResult3", "query" to seed.artist, "artistCount" to 0, "albumCount" to 0, "songCount" to 50)
+                    .filter { seed.artistId != null && it.artistId == seed.artistId }.shuffled()
+            },
+        )
+        for (load in loaders) {
+            sources += runCatching { load() }.getOrDefault(emptyList())
+            val mix = radioMix(seed, sources, exclude)
+            if (mix.size >= 40 && mix.count { it.artistId != seed.artistId } >= 26) break
+        }
+        return radioMix(seed, sources, exclude)
+    }
+
     suspend fun search(q: String): SearchResult {
-        val r = call("search3", "query" to q, "artistCount" to 6, "albumCount" to 12, "songCount" to 30)
+        val r = call("search3", "query" to q, "artistCount" to 20, "albumCount" to 20, "songCount" to 50)
             .optJSONObject("searchResult3") ?: JSONObject()
         return SearchResult(r.list("artist").map(Artist::from), r.list("album").map(Album::from), r.list("song").map(Song::from))
     }
@@ -709,6 +848,20 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
     }
 
     companion object {
+        private val probeHttp by lazy { OkHttpClient.Builder().connectTimeout(4, TimeUnit.SECONDS).callTimeout(5, TimeUnit.SECONDS).build() }
+
+        /** Asks [endpoint] what it is, without credentials. */
+        fun probe(endpoint: String): Probe {
+            val url = "$endpoint/rest/ping".toHttpUrlOrNull()?.newBuilder()
+                ?.addQueryParameter("v", "1.16.1")?.addQueryParameter("c", "navidroid")?.addQueryParameter("f", "json")?.build()
+                ?: return Probe.Unreachable("not a valid address")
+            return try {
+                probeHttp.newCall(Request.Builder().url(url).build()).execute().use { parseProbe(it.body!!.string()) }
+            } catch (e: IOException) {
+                Probe.Unreachable(networkReason(e))
+            }
+        }
+
         /** Validates credentials against [endpoint] without touching the saved session. */
         fun login(endpoint: String, user: String, password: String): Pair<String, String> {
             val salt = java.util.UUID.randomUUID().toString().replace("-", "").take(12)

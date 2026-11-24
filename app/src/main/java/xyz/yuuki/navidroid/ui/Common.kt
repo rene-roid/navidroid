@@ -50,6 +50,7 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.text.KeyboardActions
@@ -133,6 +134,11 @@ sealed interface Route {
     data object SongCache : Route
     data object ImageCache : Route
     data object SavedInfo : Route
+    data object Playback : Route
+    data object DownloadSettings : Route
+    data object Server : Route
+    data object Storage : Route
+    data object About : Route
     data class Open(val kind: Kind, val id: String) : Route
     data class More(val section: String) : Route
 }
@@ -241,10 +247,25 @@ object Likes {
 
     fun hasMix(kind: Kind, id: String) = mixes.any { it.kind == kind && it.id == id }
 
+    fun forget() {
+        overrides.clear()
+        playlists = emptySet()
+        mixes = emptyList()
+        App.it.prefs.savedPlaylists = playlists
+        App.it.prefs.savedMixes = mixes
+    }
+
     fun toggleMix(t: Tile) {
         mixes = if (hasMix(t.kind, t.id)) mixes.filterNot { it.kind == t.kind && it.id == t.id } else mixes + t
         App.it.prefs.savedMixes = mixes
     }
+}
+
+/** Logging out: nothing of this account's may show up under the next one. */
+fun forgetAccount() {
+    uiCache.clear()
+    Likes.forget()
+    Hidden.set(Hidden.playlists, false)
 }
 
 @Composable
@@ -342,7 +363,9 @@ fun SelectionBar(modifier: Modifier = Modifier) {
                 // Shrinks rather than cut off with large fonts and six actions.
                 BasicText(label, Modifier.padding(top = 2.dp), style.copy(color = Color.White), maxLines = 1, autoSize = TextAutoSize.StepBased(8.sp, style.fontSize))
             }
-            action("Play", Icons.Rounded.PlayArrow) { withSongs { player?.play(it, from = tiles.singleOrNull()?.title) } }
+            action("Play", Icons.Rounded.PlayArrow) {
+                withSongs { if (tiles.isEmpty() && it.size == 1) player?.playRadio(it[0]) else player?.play(it, from = tiles.singleOrNull()?.title) }
+            }
             action("Next", Icons.AutoMirrored.Rounded.PlaylistPlay) { withSongs { player?.playNext(it) } }
             action("Queue", Icons.AutoMirrored.Rounded.QueueMusic) { withSongs { player?.enqueue(it) } }
             action("Playlist", Icons.AutoMirrored.Rounded.PlaylistAdd) { withSongs { adding = it } }
@@ -587,6 +610,7 @@ fun SongMenu(song: Song, tint: Color = Sub) {
             item(if (liked) "Remove from Liked Songs" else "Add to Liked Songs", if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder) { Likes.toggle(song) }
             item("Play next", Icons.AutoMirrored.Rounded.PlaylistPlay) { player?.playNext(listOf(song)) }
             item("Add to queue", Icons.AutoMirrored.Rounded.QueueMusic) { player?.enqueue(listOf(song)) }
+            item("Start song radio", Icons.Rounded.Radio) { player?.playRadio(song) }
             item("Add to playlist", Icons.AutoMirrored.Rounded.PlaylistAdd) { pick = true }
             song.albumId?.let { id -> item("Go to album", Icons.Rounded.Album) { nav.go(Route.Open(Kind.Album, id)) } }
             if (song.artistId != null) item("Go to artist", Icons.Rounded.Person) { goToArtist(song) }

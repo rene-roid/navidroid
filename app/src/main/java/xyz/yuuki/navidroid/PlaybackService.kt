@@ -42,6 +42,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -54,7 +55,8 @@ import xyz.yuuki.navidroid.ui.coverRequest
 import java.io.File
 import java.io.IOException
 
-fun Song.toMediaItem(): MediaItem {
+/** [auto]: the song this one was picked to follow, when the app queued it (radio, autoplay) and not the user. */
+fun Song.toMediaItem(auto: String? = null): MediaItem {
     val app = App.it
     val art = coverArt?.let { id -> app.offline.coverFile(id).takeIf { it.exists() }?.let(Uri::fromFile) ?: Uri.parse(app.api.coverUrl(id, 600)) }
     return MediaItem.Builder()
@@ -73,13 +75,14 @@ fun Song.toMediaItem(): MediaItem {
                 .setDurationMs(duration * 1000L)
                 .setIsPlayable(true)
                 .setIsBrowsable(false)
-                .setExtras(Bundle().apply { putString("song", toJson().toString()) })
+                .setExtras(Bundle().apply { putString("song", toJson().toString()); putString("auto", auto) })
                 .build(),
         )
         .build()
 }
 
 val MediaItem.song: Song? get() = mediaMetadata.extras?.getString("song")?.let { Song.from(JSONObject(it)) }
+val MediaItem.auto: String? get() = mediaMetadata.extras?.getString("auto")
 
 class PlaybackService : MediaSessionService() {
     private var session: MediaSession? = null
@@ -87,6 +90,7 @@ class PlaybackService : MediaSessionService() {
     private val queueFile by lazy { File(filesDir, "queue.json") }
     private val buttons = Handler(Looper.getMainLooper())
     private var presses = 0
+    private var restoring: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -109,6 +113,7 @@ class PlaybackService : MediaSessionService() {
             .build()
         player.addListener(Scrobbler(player, scope))
         player.addListener(Autoplay(player, scope))
+        player.addListener(WidgetFeed(app, player, scope))
         player.addListener(object : Player.Listener {
             private var retries = 0
 
@@ -174,7 +179,7 @@ class PlaybackService : MediaSessionService() {
             })
             .build()
 
-        restoreQueue(player)
+        restoring = restoreQueue(player)
         scope.launch {
             while (isActive) {
                 delay(15_000)
@@ -184,6 +189,16 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
+
+    // A widget button can be what starts the process, and would then get here ahead of the saved queue.
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        scope.launch {
+            restoring?.join()
+            super.onStartCommand(intent, flags, startId)
+            if (intent?.getBooleanExtra(EXTRA_PLAY, false) == true) Util.handlePlayButtonAction(session?.player)
+        }
+        return START_STICKY
+    }
 
     override fun onDestroy() {
         buttons.removeCallbacksAndMessages(null)
@@ -199,7 +214,7 @@ class PlaybackService : MediaSessionService() {
 
     private fun saveQueue(player: Player) {
         val items = JSONArray()
-        for (i in 0 until player.mediaItemCount) player.getMediaItemAt(i).song?.let { items.put(it.toJson()) }
+        for (i in 0 until player.mediaItemCount) player.getMediaItemAt(i).run { song?.let { items.put(it.toJson().put("auto", auto)) } }
         val json = JSONObject()
             .put("items", items)
             .put("index", player.currentMediaItemIndex)
@@ -211,18 +226,17 @@ class PlaybackService : MediaSessionService() {
         scope.launch(Dispatchers.IO) { queueFile.writeText(json) }
     }
 
-    private fun restoreQueue(player: Player) {
+    private fun restoreQueue(player: Player) =
         scope.launch {
             val o = withContext(Dispatchers.IO) { runCatching { JSONObject(queueFile.readText()) }.getOrNull() } ?: return@launch
-            val songs = o.getJSONArray("items").objects().map(Song::from)
+            val songs = o.getJSONArray("items").objects().map { Song.from(it).toMediaItem(it.s("auto")) }
             if (songs.isEmpty() || player.mediaItemCount > 0) return@launch
-            player.setMediaItems(songs.map { it.toMediaItem() }, o.optInt("index").coerceIn(0, songs.lastIndex), o.optLong("position"))
+            player.setMediaItems(songs, o.optInt("index").coerceIn(0, songs.lastIndex), o.optLong("position"))
             player.shuffleModeEnabled = o.optBoolean("shuffle")
             player.repeatMode = o.optInt("repeat")
             player.playlistMetadata = MediaMetadata.Builder().setTitle(o.s("from")).build()
             player.prepare()
         }
-    }
 }
 
 /**
@@ -251,17 +265,33 @@ private class CoverLoader(private val app: App) : BitmapLoader {
 }
 
 /**
- * With autoplay on, tops up the queue when its last song starts, with songs like the last few heard.
+ * Keeps the music going when the queue's last song starts. A song radio (a lone song the user tapped) gets songs
+ * like it; with autoplay on, any other queue gets songs like the last few heard, unless it repeats, which never ends.
  * Offline, only downloaded ones.
  */
 private class Autoplay(private val player: ExoPlayer, private val scope: CoroutineScope) : Player.Listener {
     private var asked: String? = null
+    private var autos = 0
+
+    // A new queue asks afresh, even when it ends in the song the old one did.
+    override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
+        if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) return
+        asked = null
+        autos = 0
+    }
 
     override fun onEvents(p: Player, events: Player.Events) {
         if (!events.containsAny(Player.EVENT_MEDIA_ITEM_TRANSITION, Player.EVENT_TIMELINE_CHANGED, Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED, Player.EVENT_REPEAT_MODE_CHANGED)) return
         val app = App.it
-        val id = player.currentMediaItem?.mediaId ?: return
-        if (!app.prefs.autoplay || player.nextMediaItemIndex != C.INDEX_UNSET || id == asked) return
+        val current = player.currentMediaItem ?: return
+        val id = current.mediaId
+        val n = player.mediaItemCount
+        val had = autos
+        autos = (0 until n).count { player.getMediaItemAt(it).auto != null }
+        // The user cleared what was added for them: this song doesn't put it back.
+        if (autos < had) asked = id
+        val radio = n == 1 && player.playlistMetadata.extras?.getBoolean("radio") == true
+        if (!(radio || app.prefs.autoplay && player.nextMediaItemIndex == C.INDEX_UNSET) || id == asked) return
         asked = id
         val t = player.currentTimeline
         val shuffle = player.shuffleModeEnabled
@@ -269,14 +299,14 @@ private class Autoplay(private val player: ExoPlayer, private val scope: Corouti
             (if (next) t.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, shuffle) else t.getPreviousWindowIndex(i, Player.REPEAT_MODE_OFF, shuffle)).takeIf { it != C.INDEX_UNSET }
         val seeds = generateSequence(player.currentMediaItemIndex) { step(it, false) }.take(5).map { player.getMediaItemAt(it).mediaId }.toList()
         val order = generateSequence(t.getFirstWindowIndex(shuffle)) { step(it, true) }.toList()
-        val n = player.mediaItemCount
         val queue = (0 until n).map { player.getMediaItemAt(it).mediaId }.toSet()
+        val seed = current.song
         scope.launch {
-            val songs = runCatching { app.api.recommendations(seeds, queue) }.getOrNull().orEmpty()
+            val songs = runCatching { if (radio && seed != null) app.api.songRadio(seed, queue) else app.api.recommendations(seeds, queue) }.getOrNull().orEmpty()
                 .filter { app.api.online.value || app.offline.isDownloaded(it.id) }
             // The queue changed while asking; its own last song will ask again.
             if (songs.isEmpty() || player.currentMediaItem?.mediaId != id || player.mediaItemCount != n) return@launch
-            player.addMediaItems(songs.map { it.toMediaItem() })
+            player.addMediaItems(songs.map { it.toMediaItem(auto = current.mediaMetadata.title?.toString().orEmpty()) })
             // Added songs would otherwise be shuffled in among the ones already played.
             if (shuffle) player.setShuffleOrder(DefaultShuffleOrder((order + (n until n + songs.size)).toIntArray(), System.nanoTime()))
         }

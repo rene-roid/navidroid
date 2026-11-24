@@ -35,13 +35,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material.icons.rounded.Dns
@@ -52,8 +46,6 @@ import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.ui.autofill.ContentType
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentType
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
@@ -145,9 +137,42 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.material.icons.automirrored.rounded.Logout
+import androidx.compose.material.icons.rounded.AllInclusive
+import androidx.compose.material.icons.rounded.BugReport
+import androidx.compose.material.icons.rounded.CloudOff
+import androidx.compose.material.icons.rounded.Code
+import androidx.compose.material.icons.rounded.DownloadForOffline
+import androidx.compose.material.icons.rounded.Gavel
+import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.HighQuality
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.SignalCellularAlt
+import androidx.compose.material.icons.rounded.Storage
+import androidx.compose.material.icons.rounded.UnfoldMore
+import androidx.compose.material.icons.rounded.Wifi
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ProvideTextStyle
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalUriHandler
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import xyz.yuuki.navidroid.ApiException
+import xyz.yuuki.navidroid.Probe
+import xyz.yuuki.navidroid.networkReason
+import xyz.yuuki.navidroid.probeAddress
 import xyz.yuuki.navidroid.Api
 import xyz.yuuki.navidroid.App
-import xyz.yuuki.navidroid.normalizeEndpoint
 import xyz.yuuki.navidroid.song
 
 val fieldColors @Composable get() = OutlinedTextFieldDefaults.colors(
@@ -159,112 +184,196 @@ val fieldColors @Composable get() = OutlinedTextFieldDefaults.colors(
 
 private val fieldShape = RoundedCornerShape(14.dp)
 
+/** A server address being typed and what answered at it; [result] is null while it is blank or being checked. */
+internal class ServerField {
+    var text by mutableStateOf("")
+    var result by mutableStateOf<Pair<String, Probe>?>(null)
+    var retries by mutableIntStateOf(0)
+
+    /** The address to save, once a server answered there. */
+    val found get() = result?.takeIf { it.second is Probe.Found }?.first
+}
+
+/** An address field that asks the address what it is as you type; [found] words the good news from the server's name. */
+@Composable
+internal fun ProbeField(
+    f: ServerField, label: String, modifier: Modifier = Modifier, enabled: Boolean = true, hint: String = "",
+    none: String = "No Subsonic server here", found: (String) -> String = { it }, onGo: () -> Unit = {},
+) {
+    LaunchedEffect(f.text, f.retries) {
+        f.result = null
+        if (f.text.isBlank()) return@LaunchedEffect
+        delay(400)
+        f.result = withContext(Dispatchers.IO) { probeAddress(f.text) }
+    }
+    val r = f.result
+    OutlinedTextField(
+        f.text, { f.text = it }, modifier.fillMaxWidth(), shape = fieldShape, colors = fieldColors, enabled = enabled, singleLine = true,
+        label = { StateText(label) }, leadingIcon = { Icon(Icons.Rounded.Dns, null) },
+        trailingIcon = {
+            when {
+                f.text.isBlank() -> {}
+                r == null -> CircularProgressIndicator(Modifier.size(20.dp), color = Sub, strokeWidth = 2.dp)
+                r.second is Probe.Found -> Icon(Icons.Rounded.Check, null, tint = Green)
+                else -> IconButton({ f.retries++ }) { Icon(Icons.Rounded.Refresh, "Check again") }
+            }
+        },
+        supportingText = {
+            val (text, color) = when {
+                f.text.isBlank() -> hint to Faint
+                r == null -> "Checking…" to Sub
+                else -> when (val p = r.second) {
+                    is Probe.Found -> found(p.name) + (if (r.first.startsWith("http://")) " • not encrypted (http)" else "") to Green
+                    Probe.NotSubsonic -> none to Red
+                    is Probe.Unreachable -> "Can't reach this address: ${p.reason}" to Red
+                }
+            }
+            Text(text, color = color, style = MaterialTheme.typography.bodySmall)
+        },
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, imeAction = ImeAction.Go),
+        keyboardActions = KeyboardActions(onGo = { onGo() }),
+    )
+}
+
+@Composable
+private fun ErrorBox(lines: List<String>) = Row(
+    Modifier.fillMaxWidth().clip(fieldShape).background(Red.copy(alpha = .14f)).padding(14.dp),
+    horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
+) {
+    Icon(Icons.Rounded.ErrorOutline, null, tint = Red)
+    Column { lines.forEach { Text(it, style = MaterialTheme.typography.bodyMedium) } }
+}
+
+/** Two steps on one card: find the server, then sign in to it. */
 @Composable
 fun LoginScreen(onDone: () -> Unit) {
+    val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var servers by remember { mutableStateOf("") }
+    val servers = remember { mutableStateListOf(ServerField()) }
+    var account by remember { mutableStateOf(false) }
     var user by remember { mutableStateOf("") }
     var pass by remember { mutableStateOf("") }
     var showPass by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
-    val canSubmit = !busy && servers.isNotBlank() && user.isNotBlank() && pass.isNotEmpty()
-    val spin by rememberInfiniteTransition().animateFloat(0f, 360f, infiniteRepeatable(tween(6000, easing = LinearEasing)))
+    var errors by remember { mutableStateOf(emptyList<String>()) }
+    val reachable = servers.mapNotNull { it.found }.distinct()
+    val canSubmit = !busy && reachable.isNotEmpty() && user.isNotBlank() && pass.isNotEmpty()
 
     fun submit() {
         if (!canSubmit) return
         busy = true
-        error = null
+        errors = emptyList()
         scope.launch {
-            val eps = servers.lines().filter { it.isNotBlank() }.map(::normalizeEndpoint).distinct()
-            // Credentials are checked on the first endpoint that accepts them; only the salted token is kept.
-            var last: Exception? = null
-            val ok = withContext(Dispatchers.IO) {
-                eps.firstNotNullOfOrNull { ep ->
-                    try { ep to Api.login(ep, user.trim(), pass) } catch (e: Exception) { last = e; null }
-                }
+            val name = user.trim()
+            // Only the salted token is kept, and only the addresses that took it.
+            val results = withContext(Dispatchers.IO) {
+                reachable.map { ep -> async { ep to runCatching { Api.login(ep, name, pass) } } }.awaitAll()
             }
-            if (ok == null) {
-                error = (last as? xyz.yuuki.navidroid.ApiException)?.message ?: "Couldn't reach any of those addresses"
+            val ok = results.mapNotNull { (ep, r) -> r.getOrNull()?.let { ep to it } }
+            if (ok.isEmpty()) {
+                val why = results.map { (ep, r) -> ep to r.exceptionOrNull()!!.let { (it as? ApiException)?.message ?: "Couldn't sign in: ${networkReason(it)}" } }
+                // The same answer from every address, a wrong password say, is said once.
+                errors = why.map { it.second }.distinct().singleOrNull()?.let(::listOf) ?: why.map { "${it.first}: ${it.second}" }
                 busy = false
                 return@launch
             }
             val prefs = App.it.prefs
-            prefs.endpoints = eps
-            prefs.username = user.trim()
-            prefs.token = ok.second.first
-            prefs.salt = ok.second.second
-            prefs.active = ok.first
+            prefs.endpoints = ok.map { it.first }
+            prefs.username = name
+            prefs.token = ok[0].second.first
+            prefs.salt = ok[0].second.second
+            prefs.active = ok[0].first
             App.it.api = Api(prefs, App.it.scope).apply { clearSaved() }
             App.it.scope.launch { App.it.api.pickFastest() }
             onDone()
         }
     }
 
+    BackHandler(account && !busy) { account = false }
     Box(Modifier.fillMaxSize().background(Bg)) {
-        Box(
-            Modifier.fillMaxWidth().height(400.dp)
-                .background(Brush.radialGradient(listOf(Accent.copy(alpha = .35f), Accent.copy(alpha = .08f), Color.Transparent))),
-        )
+        Aurora(null, null, modifier = Modifier.fillMaxSize())
         Column(
-            // Phone width on a tablet instead of fields across the whole screen.
-            Modifier.align(Alignment.TopCenter).widthIn(max = 560.dp).fillMaxSize().systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+            Modifier.fillMaxSize().systemBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
         ) {
-            Box(Modifier.size(200.dp)) {
-                Image(painterResource(R.drawable.ic_record), null, Modifier.matchParentSize().graphicsLayer { rotationZ = spin })
-                Image(painterResource(R.drawable.ic_play_label), null, Modifier.matchParentSize())
-            }
-            Text("Navidroid", style = MaterialTheme.typography.displaySmall, modifier = Modifier.offset(y = (-28).dp))
+            LauncherIcon(icons[remember { currentIcon(ctx) }].res, 88.dp)
+            Text("Navidroid", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(top = 12.dp))
             Text(
-                "Your whole library, streamed from your own Navidrome server.",
-                style = MaterialTheme.typography.bodyMedium.copy(color = Sub), textAlign = TextAlign.Center,
-                modifier = Modifier.offset(y = (-20).dp).padding(horizontal = 16.dp),
+                "Your whole library, streamed from your own server.",
+                style = MaterialTheme.typography.bodyMedium, color = Sub, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp, bottom = 20.dp),
             )
-            Spacer(Modifier.height(8.dp))
-            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    servers, { servers = it }, Modifier.fillMaxWidth(), shape = fieldShape, colors = fieldColors, enabled = !busy,
-                    label = { StateText("Server addresses") }, placeholder = { StateText("music.example.com\n192.168.1.10:4533") }, minLines = 2,
-                    leadingIcon = { Icon(Icons.Rounded.Dns, null) },
-                    supportingText = { StateText("One per line. The fastest one is used, and the app switches if it goes down.") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false),
-                )
-                OutlinedTextField(
-                    user, { user = it }, Modifier.fillMaxWidth().semantics { contentType = ContentType.Username },
-                    shape = fieldShape, colors = fieldColors, enabled = !busy, singleLine = true,
-                    label = { StateText("Username") }, leadingIcon = { Icon(Icons.Rounded.Person, null) },
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, imeAction = ImeAction.Next),
-                )
-                OutlinedTextField(
-                    pass, { pass = it }, Modifier.fillMaxWidth().semantics { contentType = ContentType.Password },
-                    shape = fieldShape, colors = fieldColors, enabled = !busy, singleLine = true,
-                    label = { StateText("Password") }, leadingIcon = { Icon(Icons.Rounded.Lock, null) },
-                    trailingIcon = {
-                        IconButton({ showPass = !showPass }) {
-                            Icon(if (showPass) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility, if (showPass) "Hide password" else "Show password")
-                        }
-                    },
-                    visualTransformation = if (showPass) VisualTransformation.None else PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Go),
-                    keyboardActions = KeyboardActions(onGo = { submit() }),
-                )
-            }
-            error?.let {
-                Row(
-                    Modifier.padding(top = 16.dp).fillMaxWidth().clip(fieldShape).background(Red.copy(alpha = .14f)).padding(14.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Rounded.ErrorOutline, null, tint = Red)
-                    Text(it, style = MaterialTheme.typography.bodyMedium)
-                }
-            }
-            Button(
-                ::submit, Modifier.padding(top = 24.dp).fillMaxWidth().height(56.dp), enabled = canSubmit,
-                colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent, disabledContainerColor = Elevated, disabledContentColor = Faint),
+            Column(
+                // Phone width on a tablet instead of fields across the whole screen.
+                Modifier.widthIn(max = 440.dp).fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Color.Black.copy(alpha = .45f)).padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                if (busy) CircularProgressIndicator(Modifier.size(22.dp), color = OnAccent, strokeWidth = 2.dp)
-                else Text("Log in", color = LocalContentColor.current, style = MaterialTheme.typography.titleMedium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (account) "Your account" else "Your server", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                    Text(if (account) "Step 2 of 2" else "Step 1 of 2", style = MaterialTheme.typography.labelMedium, color = Faint)
+                }
+                if (!account) {
+                    servers.forEachIndexed { i, f ->
+                        key(f) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                ProbeField(
+                                    f, if (i == 0) "Server address" else "Another address", Modifier.weight(1f),
+                                    hint = if (i == 0) "music.example.com or 192.168.1.10:4533" else "Another way to the same server",
+                                ) { if (reachable.isNotEmpty()) account = true }
+                                if (i > 0) IconButton({ servers.remove(f) }) { Icon(Icons.Rounded.Close, "Remove address", tint = Sub) }
+                            }
+                        }
+                    }
+                    TextButton({ servers += ServerField() }) {
+                        Icon(Icons.Rounded.Add, null, Modifier.size(18.dp), tint = Accent)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Add another address (e.g. your home network)", color = Accent)
+                    }
+                    Button(
+                        { account = true }, Modifier.fillMaxWidth().heightIn(min = 52.dp), enabled = reachable.isNotEmpty(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent, disabledContainerColor = Elevated, disabledContentColor = Faint),
+                    ) { Text("Continue", color = LocalContentColor.current, style = MaterialTheme.typography.titleMedium) }
+                } else {
+                    Row(
+                        Modifier.fillMaxWidth().clip(fieldShape).background(Color.White.copy(alpha = .06f)).padding(start = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(Icons.Rounded.Check, null, tint = Green)
+                        Column(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 10.dp)) {
+                            Text(servers.firstNotNullOfOrNull { (it.result?.second as? Probe.Found)?.name } ?: "Server", style = MaterialTheme.typography.bodyLarge)
+                            Text(reachable.joinToString("\n"), style = MaterialTheme.typography.bodySmall)
+                        }
+                        TextButton({ account = false }, enabled = !busy) { Text("Change", color = Accent) }
+                    }
+                    val focus = remember { FocusRequester() }
+                    LaunchedEffect(Unit) { focus.requestFocus() }
+                    OutlinedTextField(
+                        user, { user = it }, Modifier.fillMaxWidth().focusRequester(focus).semantics { contentType = ContentType.Username },
+                        shape = fieldShape, colors = fieldColors, enabled = !busy, singleLine = true,
+                        label = { StateText("Username") }, leadingIcon = { Icon(Icons.Rounded.Person, null) },
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, imeAction = ImeAction.Next),
+                    )
+                    OutlinedTextField(
+                        pass, { pass = it }, Modifier.fillMaxWidth().semantics { contentType = ContentType.Password },
+                        shape = fieldShape, colors = fieldColors, enabled = !busy, singleLine = true,
+                        label = { StateText("Password") }, leadingIcon = { Icon(Icons.Rounded.Lock, null) },
+                        trailingIcon = {
+                            IconButton({ showPass = !showPass }) {
+                                Icon(if (showPass) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility, if (showPass) "Hide password" else "Show password")
+                            }
+                        },
+                        visualTransformation = if (showPass) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Go),
+                        keyboardActions = KeyboardActions(onGo = { submit() }),
+                    )
+                    if (errors.isNotEmpty()) ErrorBox(errors)
+                    Button(
+                        ::submit, Modifier.fillMaxWidth().heightIn(min = 52.dp), enabled = canSubmit,
+                        colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent, disabledContainerColor = Elevated, disabledContentColor = Faint),
+                    ) {
+                        if (busy) CircularProgressIndicator(Modifier.size(22.dp), color = OnAccent, strokeWidth = 2.dp)
+                        else Text("Log in", color = LocalContentColor.current, style = MaterialTheme.typography.titleMedium)
+                    }
+                }
             }
         }
     }
@@ -276,29 +385,97 @@ private val Red = Color(0xFFF15E6C)
 @Composable
 private fun StateText(text: String) = Text(text, color = LocalContentColor.current)
 
-/** A header and a card holding one group of settings; [action] sits at the header's end. */
+// ---- what every settings page is built from ---------------------------------------------------
+
+internal val SettingsWidth = Modifier.widthIn(max = 640.dp).fillMaxWidth()
+
+/** A settings page: its title, then [content] in a column no wider than a phone. */
 @Composable
-private fun Section(title: String, modifier: Modifier, action: @Composable () -> Unit = {}, content: @Composable ColumnScope.() -> Unit) = Column(modifier.padding(horizontal = 16.dp)) {
-    Row(Modifier.padding(start = 4.dp, top = 20.dp, bottom = 6.dp).heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(title.uppercase(), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.W700, letterSpacing = 1.sp, color = Sub, modifier = Modifier.weight(1f))
+internal fun SettingsPage(title: String, content: LazyListScope.() -> Unit) =
+    LazyColumn(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+        item { Box(SettingsWidth) { BackTitle(title) } }
+        content()
+        item { BottomSpacer() }
+    }
+
+/** A card holding one group of settings, under a header if it has a [title]; [action] sits at the header's end. */
+@Composable
+internal fun Section(
+    title: String? = null, modifier: Modifier = SettingsWidth, action: @Composable () -> Unit = {}, content: @Composable ColumnScope.() -> Unit,
+) = Column(modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp)) {
+    if (title != null) Row(Modifier.padding(start = 4.dp, top = 8.dp).heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(title.uppercase(), style = MaterialTheme.typography.labelMedium, letterSpacing = 1.sp, color = Sub, modifier = Modifier.weight(1f))
         action()
     }
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = .06f)).padding(vertical = 4.dp), content = content)
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Color.White.copy(alpha = .06f)).padding(vertical = 4.dp), content = content)
 }
 
 @Composable
-private fun SettingRow(title: String, subtitle: String? = null, onClick: (() -> Unit)? = null, trailing: @Composable () -> Unit = {}) = Row(
-    Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(horizontal = 16.dp, vertical = 12.dp),
+internal fun IconTile(icon: ImageVector, tint: Color) =
+    Box(Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(tint.copy(alpha = .18f)), contentAlignment = Alignment.Center) {
+        Icon(icon, null, Modifier.size(20.dp), tint = tint)
+    }
+
+/** Titles wrap rather than cut off, so a large font scale costs height, not words. */
+@Composable
+internal fun SettingRow(
+    title: String, subtitle: String? = null, onClick: (() -> Unit)? = null, icon: ImageVector? = null, tint: Color = Accent,
+    subtitleLines: Int = Int.MAX_VALUE, trailing: @Composable () -> Unit = {},
+) = Row(
+    Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).heightIn(min = 60.dp).padding(horizontal = 16.dp, vertical = 10.dp),
     verticalAlignment = Alignment.CenterVertically,
 ) {
-    Column(Modifier.weight(1f)) {
+    if (icon != null) {
+        IconTile(icon, tint)
+        Spacer(Modifier.width(14.dp))
+    }
+    Column(Modifier.weight(1f).padding(end = 8.dp)) {
         Text(title, style = MaterialTheme.typography.bodyLarge)
-        subtitle?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        subtitle?.let { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = subtitleLines, overflow = TextOverflow.Ellipsis) }
     }
     trailing()
 }
 
+/** A row that opens a page. */
+@Composable
+internal fun NavRow(title: String, subtitle: String?, icon: ImageVector? = null, tint: Color = Accent, onClick: () -> Unit) =
+    SettingRow(title, subtitle, onClick, icon, tint, subtitleLines = 2) { Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = Faint) }
+
+@Composable
+internal fun SwitchRow(title: String, subtitle: String?, checked: Boolean, icon: ImageVector? = null, tint: Color = Accent, onChange: (Boolean) -> Unit) =
+    SettingRow(title, subtitle, { onChange(!checked) }, icon, tint) {
+        Switch(checked, onChange, colors = SwitchDefaults.colors(checkedTrackColor = Accent))
+    }
+
+private fun quality(br: Int) = qualities.firstOrNull { it.first == br }?.second ?: "$br kbps"
+
+private val qualities = listOf(0 to "Original", 320 to "320 kbps", 256 to "256 kbps", 192 to "192 kbps", 160 to "160 kbps", 128 to "128 kbps", 96 to "96 kbps")
+
+/** A row showing one of [options], picked from a menu. */
+@Composable
+internal fun ChoiceRow(
+    title: String, value: Int, options: List<Pair<Int, String>> = qualities, icon: ImageVector? = null, tint: Color = Accent, onChange: (Int) -> Unit,
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        SettingRow(title, options.firstOrNull { it.first == value }?.second ?: "$value kbps", { open = true }, icon, tint) {
+            Icon(Icons.Rounded.UnfoldMore, null, tint = Faint)
+        }
+        DropdownMenu(open, { open = false }, containerColor = Elevated) {
+            options.forEach { (v, label) ->
+                DropdownMenuItem({ Text(label) }, { onChange(v); open = false }, trailingIcon = { if (v == value) Icon(Icons.Rounded.Check, null, tint = Accent) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun AuroraSwitch(t: Toggle) = SwitchRow(t.title, t.subtitle, t.on) { t.on = it }
+
 private val storageColors = listOf(Color(0xFF509BF5), Color(0xFF8D67AB), Color(0xFF27856A), Color(0xFFF59B23))
+
+/** Downloads, streamed songs, covers, saved info. */
+private fun storageBytes(ctx: Context) = App.it.run { listOf(offline.bytesUsed(), offline.streamBytes(), ctx.imageLoader.diskCache?.size ?: 0L, api.savedBytes()) }
 
 /** Bytes this app moved since the 1st, on Wi-Fi and on mobile data; null where Android won't say (mobile before Android 10). */
 @Suppress("DEPRECATION")
@@ -323,31 +500,6 @@ private fun monthTraffic(ctx: Context): Pair<Long?, Long?> {
         }
     }.getOrNull()
     return sum(ConnectivityManager.TYPE_WIFI) to sum(ConnectivityManager.TYPE_MOBILE)
-}
-
-private fun quality(br: Int) = qualities.firstOrNull { it.first == br }?.second ?: "$br kbps"
-
-private val qualities = listOf(0 to "Original", 320 to "320 kbps", 256 to "256 kbps", 192 to "192 kbps", 160 to "160 kbps", 128 to "128 kbps", 96 to "96 kbps")
-
-@Composable
-private fun ChoiceRow(title: String, value: Int, options: List<Pair<Int, String>> = qualities, onChange: (Int) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        SettingRow(title, options.firstOrNull { it.first == value }?.second ?: "$value kbps", { open = true })
-        DropdownMenu(open, { open = false }, containerColor = Elevated) {
-            options.forEach { (v, label) ->
-                DropdownMenuItem({ Text(label) }, { onChange(v); open = false }, trailingIcon = { if (v == value) Icon(Icons.Rounded.Check, null, tint = Accent) })
-            }
-        }
-    }
-}
-
-@Composable
-private fun NextArrow() = Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, null, tint = Sub)
-
-@Composable
-private fun AuroraSwitch(t: Toggle) = SettingRow(t.title, t.subtitle, { t.on = !t.on }) {
-    Switch(t.on, { t.on = it }, colors = SwitchDefaults.colors(checkedTrackColor = Accent))
 }
 
 private val themes = listOf(
@@ -434,40 +586,82 @@ private fun ColorDialog(initial: Color, onDismiss: () -> Unit, onPick: (Color) -
     )
 }
 
-@Composable
-fun SettingsScreen(onLogout: () -> Unit) {
-    val nav = LocalNav.current
-    val ctx = LocalContext.current
-    val app = App.it
-    val prefs = app.prefs
-    val scope = rememberCoroutineScope()
-    var endpoints by remember { mutableStateOf(prefs.endpoints) }
-    var newEndpoint by remember { mutableStateOf("") }
-    val latency by app.api.latency.collectAsStateWithLifecycle()
-    var active by remember { mutableStateOf(app.api.active) }
-    var checking by remember { mutableStateOf(false) }
-    var wifi by remember { mutableIntStateOf(prefs.streamBitrateWifi) }
-    var mobile by remember { mutableIntStateOf(prefs.streamBitrateMobile) }
-    var dl by remember { mutableIntStateOf(prefs.downloadBitrate) }
-    var wifiOnly by remember { mutableStateOf(prefs.wifiOnlyDownloads) }
-    var autoplay by remember { mutableStateOf(prefs.autoplay) }
-    val icon = remember { currentIcon(ctx) }
-    var cleared by remember { mutableIntStateOf(0) }
-    // Downloads, streamed songs, covers, saved info.
-    val storage by produceState(listOf(0L, 0L, 0L, 0L), cleared) {
-        value = withContext(Dispatchers.IO) { listOf(app.offline.bytesUsed(), app.offline.streamBytes(), ctx.imageLoader.diskCache?.size ?: 0L, app.api.savedBytes()) }
-    }
-    val traffic by produceState<Pair<Long?, Long?>>(null to null) { value = withContext(Dispatchers.IO) { monthTraffic(ctx) } }
+private const val REPO = "https://github.com/rene-roid/navidroid"
 
+private fun onOff(on: Boolean) = if (on) "on" else "off"
+
+private fun appVersion(ctx: Context) = ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
+
+/** A row of the settings home: the page it opens, and a line saying how things there stand right now. */
+private class Category(val title: String, val icon: ImageVector, val tint: Color, val route: Route, val summary: @Composable () -> String)
+
+/** The settings home, one card per group. */
+private val categories = listOf(
+    listOf(
+        Category("Playback", Icons.Rounded.GraphicEq, Green, Route.Playback) {
+            App.it.prefs.run { "${quality(streamBitrateWifi)} on Wi-Fi • ${quality(streamBitrateMobile)} on mobile data • Autoplay ${onOff(autoplay)}" }
+        },
+        Category("Downloads", Icons.Rounded.DownloadForOffline, Color(0xFF509BF5), Route.DownloadSettings) {
+            val pins by App.it.offline.pins.collectAsStateWithLifecycle()
+            App.it.prefs.run { "${quality(downloadBitrate)} • ${if (wifiOnlyDownloads) "Wi-Fi only" else "Any network"} • ${pins.size} kept on this phone" }
+        },
+    ),
+    listOf(
+        Category("Appearance", Icons.Rounded.Palette, Purple, Route.Appearance) {
+            val ctx = LocalContext.current
+            "${themeName()} theme • ${icons[remember { currentIcon(ctx) }].name} icon • Aurora ${onOff(auroraOn.on)}"
+        },
+        Category("Library", Icons.Rounded.LibraryMusic, Color(0xFFF59E0B), Route.HiddenPlaylists) {
+            Hidden.playlists.size.let { if (it == 0) "No hidden playlists" else "$it hidden playlists" }
+        },
+    ),
+    listOf(
+        Category("Server & connection", Icons.Rounded.Dns, Color(0xFF14B8A6), Route.Server) {
+            val n = App.it.prefs.endpoints.size
+            "${App.it.api.active.substringAfter("://")} in use • ${if (n == 1) "1 address" else "$n addresses"}"
+        },
+        Category("Storage", Icons.Rounded.Storage, Color(0xFFEC4899), Route.Storage) {
+            val ctx = LocalContext.current
+            val used by produceState<Long?>(null) { value = withContext(Dispatchers.IO) { storageBytes(ctx).sum() } }
+            used?.let { "${formatBytes(it)} on this phone" } ?: "Counting…"
+        },
+    ),
+    listOf(
+        Category("About", Icons.Rounded.Info, Sub, Route.About) { "Version ${appVersion(LocalContext.current)}" },
+    ),
+)
+
+/** The address in use and whether the addresses are being raced right now. */
+private class Connection(val active: String, val checking: Boolean, val recheck: () -> Unit)
+
+/** Races the addresses when first shown, and again on [Connection.recheck]. */
+@Composable
+private fun rememberConnection(): Connection {
+    val scope = rememberCoroutineScope()
+    var active by remember { mutableStateOf(App.it.api.active) }
+    var checking by remember { mutableStateOf(false) }
     fun recheck() {
         checking = true
         scope.launch {
-            app.api.pickFastest()
-            active = app.api.active
+            App.it.api.pickFastest()
+            active = App.it.api.active
             checking = false
         }
     }
     LaunchedEffect(Unit) { recheck() }
+    return Connection(active, checking, ::recheck)
+}
+
+/** Who is logged in and where, and how the connection is doing. */
+@Composable
+private fun AccountCard(onLogout: () -> Unit) {
+    val nav = LocalNav.current
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val conn = rememberConnection()
+    val latency by App.it.api.latency.collectAsStateWithLifecycle()
+    val server by produceState<Probe?>(null, conn.active) { value = withContext(Dispatchers.IO) { Api.probe(conn.active) } }
+    var confirm by remember { mutableStateOf(false) }
     val pickAvatar = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
         scope.launch {
@@ -477,100 +671,212 @@ fun SettingsScreen(onLogout: () -> Unit) {
             avatarVersion++
         }
     }
-
-    val switchColors = SwitchDefaults.colors(checkedTrackColor = Accent)
-    val wide = Modifier.widthIn(max = 640.dp).fillMaxWidth()
-    LazyColumn(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
-        item { Box(wide) { BackTitle("Settings") } }
-        item {
-            Section("Account", wide) {
-                Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Avatar(48.dp) { pickAvatar.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
-                    Box(Modifier.weight(1f)) {
-                        SettingRow(displayName(), "Logged in as ${prefs.username}") {
-                            OutlinedButton(onLogout) { Text("Log out", color = Color.White) }
-                        }
-                    }
+    val where = (server as? Probe.Found)?.name ?: conn.active.substringAfter("://")
+    Column(
+        SettingsWidth.padding(horizontal = 16.dp).clip(RoundedCornerShape(20.dp))
+            .background(Brush.linearGradient(listOf(Accent.copy(alpha = .3f), Color.White.copy(alpha = .06f)))).padding(16.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // The avatar's initial is sized by the text style around it.
+            ProvideTextStyle(MaterialTheme.typography.headlineMedium) {
+                Avatar(72.dp) { pickAvatar.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+            }
+            Column(Modifier.padding(start = 16.dp).weight(1f)) {
+                Text(displayName(), style = MaterialTheme.typography.headlineSmall)
+                Text("${App.it.prefs.username} on $where", style = MaterialTheme.typography.bodyMedium, color = Sub)
+                Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val ms = latency[conn.active]
+                    val known = conn.active in latency
+                    Box(Modifier.size(8.dp).clip(CircleShape).background(if (ms != null) Green else if (known) Red else Faint))
+                    Text(
+                        if (ms != null) "Connected • $ms ms" else if (known) "Can't reach the server" else "Checking…",
+                        Modifier.padding(start = 8.dp), style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             }
         }
+        Row(Modifier.padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton({ nav.go(Route.Server) }, Modifier.weight(1f)) {
+                Icon(Icons.Rounded.Dns, null, Modifier.size(18.dp), tint = Color.White)
+                Spacer(Modifier.width(6.dp))
+                Text("Server", color = Color.White)
+            }
+            OutlinedButton({ confirm = true }, Modifier.weight(1f)) {
+                Icon(Icons.AutoMirrored.Rounded.Logout, null, Modifier.size(18.dp), tint = Color.White)
+                Spacer(Modifier.width(6.dp))
+                Text("Log out", color = Color.White)
+            }
+        }
+    }
+    if (confirm) androidx.compose.material3.AlertDialog(
+        onDismissRequest = { confirm = false },
+        containerColor = Elevated,
+        title = { Text("Log out?") },
+        text = { Text("You'll need the server's address and your password to come back. Downloads stay on this phone.") },
+        confirmButton = { TextButton({ confirm = false; onLogout() }) { Text("Log out", color = Red) } },
+        dismissButton = { TextButton({ confirm = false }) { Text("Cancel", color = Color.White) } },
+    )
+}
+
+@Composable
+fun SettingsScreen(onLogout: () -> Unit) {
+    val nav = LocalNav.current
+    SettingsPage("Settings") {
+        item { AccountCard(onLogout) }
+        items(categories) { group ->
+            Section { group.forEach { c -> NavRow(c.title, c.summary(), c.icon, c.tint) { nav.go(c.route) } } }
+        }
+    }
+}
+
+@Composable
+fun PlaybackSettingsScreen() {
+    val prefs = App.it.prefs
+    var wifi by remember { mutableIntStateOf(prefs.streamBitrateWifi) }
+    var mobile by remember { mutableIntStateOf(prefs.streamBitrateMobile) }
+    var autoplay by remember { mutableStateOf(prefs.autoplay) }
+    SettingsPage("Playback") {
         item {
-            Section("Server", wide, action = {
-                if (checking) CircularProgressIndicator(Modifier.padding(12.dp).size(20.dp), color = Accent, strokeWidth = 2.dp)
-                else IconButton(::recheck) { Icon(Icons.Rounded.Refresh, "Test all") }
+            Section("Streaming quality") {
+                ChoiceRow("On Wi-Fi", wifi, icon = Icons.Rounded.Wifi, tint = Green) { wifi = it; prefs.streamBitrateWifi = it }
+                ChoiceRow("On mobile data", mobile, icon = Icons.Rounded.SignalCellularAlt, tint = Green) { mobile = it; prefs.streamBitrateMobile = it }
+            }
+        }
+        item {
+            Section("Queue") {
+                SwitchRow("Autoplay", "When the queue ends, keep playing songs like the last ones. Repeat all turns it off", autoplay, Icons.Rounded.AllInclusive, Green) {
+                    autoplay = it
+                    prefs.autoplay = it
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DownloadSettingsScreen() {
+    val nav = LocalNav.current
+    val app = App.it
+    val blue = Color(0xFF509BF5)
+    var dl by remember { mutableIntStateOf(app.prefs.downloadBitrate) }
+    var wifiOnly by remember { mutableStateOf(app.prefs.wifiOnlyDownloads) }
+    val pins by app.offline.pins.collectAsStateWithLifecycle()
+    SettingsPage("Downloads") {
+        item {
+            Section {
+                ChoiceRow("Download quality", dl, icon = Icons.Rounded.HighQuality, tint = blue) { dl = it; app.prefs.downloadBitrate = it; app.offline.sync() }
+                SwitchRow("Download on Wi-Fi only", "Pinned playlists wait for Wi-Fi", wifiOnly, Icons.Rounded.Wifi, blue) { wifiOnly = it; app.offline.setWifiOnly(it) }
+            }
+        }
+        item {
+            Section {
+                NavRow("Manage downloads", "${pins.size} playlists and albums kept on this phone", Icons.Rounded.DownloadForOffline, blue) { nav.go(Route.Downloads) }
+            }
+        }
+    }
+}
+
+@Composable
+fun ServerScreen() {
+    val prefs = App.it.prefs
+    val conn = rememberConnection()
+    val latency by App.it.api.latency.collectAsStateWithLifecycle()
+    var endpoints by remember { mutableStateOf(prefs.endpoints) }
+    var adding by remember { mutableStateOf(false) }
+    val info by produceState<Probe?>(null, conn.active) { value = withContext(Dispatchers.IO) { Api.probe(conn.active) } }
+    fun save(list: List<String>) {
+        endpoints = list
+        prefs.endpoints = list
+        conn.recheck()
+    }
+    SettingsPage("Server & connection") {
+        item {
+            Section("Addresses", action = {
+                if (conn.checking) CircularProgressIndicator(Modifier.padding(12.dp).size(20.dp), color = Accent, strokeWidth = 2.dp)
+                else IconButton(conn.recheck) { Icon(Icons.Rounded.Refresh, "Check again") }
             }) {
-                endpoints.forEach { ep ->
+                endpoints.forEachIndexed { i, ep ->
                     val ms = latency[ep]
+                    val testing = ep !in latency
                     SettingRow(
                         ep,
-                        when {
-                            ep !in latency -> "Testing…"
-                            ms == null -> "Unreachable"
-                            ep == active -> "In use • $ms ms"
-                            else -> "$ms ms"
-                        },
+                        listOfNotNull("Preferred".takeIf { i == 0 && endpoints.size > 1 }, if (testing) "Checking…" else ms?.let { "$it ms" } ?: "Unreachable").joinToString(" • "),
+                        if (i > 0) ({ save(listOf(ep) + (endpoints - ep)) }) else null,
+                        if (testing) Icons.Rounded.MoreHoriz else if (ms != null) Icons.Rounded.Check else Icons.Rounded.CloudOff,
+                        if (testing) Sub else if (ms != null) Green else Red,
                     ) {
-                        if (ep == active) Icon(Icons.Rounded.Check, "In use", tint = Accent)
-                        if (endpoints.size > 1) IconButton({
-                            endpoints = endpoints - ep
-                            prefs.endpoints = endpoints
-                            recheck()
-                        }) { Icon(Icons.Rounded.Close, "Remove", tint = Sub) }
+                        if (ep == conn.active) Text(
+                            "In use", Modifier.clip(CircleShape).background(Accent.copy(alpha = .22f)).padding(horizontal = 10.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        if (endpoints.size > 1) IconButton({ save(endpoints - ep) }) { Icon(Icons.Rounded.Close, "Remove $ep", tint = Sub) }
                     }
                 }
-                Row(Modifier.padding(start = 16.dp, end = 4.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        newEndpoint, { newEndpoint = it }, Modifier.weight(1f), singleLine = true, colors = fieldColors,
-                        placeholder = { Text("Add another address") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                    )
-                    IconButton({
-                        if (newEndpoint.isNotBlank()) {
-                            endpoints = (endpoints + normalizeEndpoint(newEndpoint)).distinct()
-                            prefs.endpoints = endpoints
-                            newEndpoint = ""
-                            recheck()
-                        }
-                    }) { Icon(Icons.Rounded.Add, "Add") }
-                }
+                SettingRow("Add address", "Another way to the same server, like your home network", { adding = true }, Icons.Rounded.Add)
             }
         }
         item {
-            Section("Playback", wide) {
-                ChoiceRow("Streaming quality on Wi-Fi", wifi) { wifi = it; prefs.streamBitrateWifi = it }
-                ChoiceRow("Streaming quality on mobile data", mobile) { mobile = it; prefs.streamBitrateMobile = it }
-                SettingRow("Autoplay", "When the queue ends, keep playing songs like the last ones", { autoplay = !autoplay; prefs.autoplay = autoplay }) {
-                    Switch(autoplay, { autoplay = it; prefs.autoplay = it }, colors = switchColors)
-                }
-            }
+            Text(
+                "The preferred address is used whenever it answers, otherwise the fastest of the others. Tap an address to prefer it.",
+                SettingsWidth.padding(horizontal = 20.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall,
+            )
         }
         item {
-            Section("Downloads", wide) {
-                ChoiceRow("Download quality", dl) { dl = it; prefs.downloadBitrate = it; app.offline.sync() }
-                SettingRow("Download on Wi-Fi only", "Pinned playlists wait for Wi-Fi", { wifiOnly = !wifiOnly; app.offline.setWifiOnly(wifiOnly) }) {
-                    Switch(wifiOnly, { wifiOnly = it; app.offline.setWifiOnly(it) }, colors = switchColors)
-                }
-                SettingRow("Manage downloads", "See what's kept on this phone", { nav.go(Route.Downloads) }) { NextArrow() }
+            Section("Server") {
+                val found = info as? Probe.Found
+                // "…" while asking, "—" when it did not answer.
+                fun value(of: (Probe.Found) -> String) = found?.let(of) ?: if (info == null) "…" else "—"
+                SettingRow("Type") { Text(value { it.type.replaceFirstChar(Char::uppercase) }, color = Sub) }
+                SettingRow("Version") { Text(value { it.version.ifEmpty { "Unknown" } }, color = Sub) }
+                SettingRow("OpenSubsonic", "Extras like synced lyrics and several artists per song") { Text(value { if (it.openSubsonic) "Yes" else "No" }, color = Sub) }
             }
         }
-        item {
-            Section("Personalise", wide) {
-                SettingRow(
-                    "Appearance", "${themeName()} theme • ${icons[icon].name} icon • Aurora ${if (auroraOn.on) "on" else "off"}", { nav.go(Route.Appearance) },
-                ) {
-                    LauncherIcon(icons[icon].res, 32.dp)
-                    NextArrow()
-                }
-                SettingRow("Hidden playlists", Hidden.playlists.size.let { if (it == 0) "None hidden" else "$it hidden" }, { nav.go(Route.HiddenPlaylists) }) { NextArrow() }
+    }
+    if (adding) AddAddressSheet(endpoints, { adding = false }) {
+        adding = false
+        save(endpoints + it)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AddAddressSheet(known: List<String>, onDismiss: () -> Unit, onAdd: (String) -> Unit) {
+    val field = remember { ServerField() }
+    val found = field.found
+    ModalBottomSheet(onDismiss, containerColor = Elevated) {
+        Column(Modifier.padding(start = 24.dp, end = 24.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Add address", style = MaterialTheme.typography.titleLarge)
+            Text("Another way to reach the same server. It is checked as you type.", style = MaterialTheme.typography.bodySmall)
+            ProbeField(field, "Server address", hint = "music.example.com or 192.168.1.10:4533", none = "No server at this address", found = { "$it found" }) {
+                if (found != null && found !in known) onAdd(found)
             }
+            if (found != null && found in known) Text("That address is already on your list.", style = MaterialTheme.typography.bodySmall)
+            Button(
+                { onAdd(found!!) }, Modifier.fillMaxWidth().heightIn(min = 52.dp), enabled = found != null && found !in known,
+                colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent, disabledContainerColor = Tile, disabledContentColor = Faint),
+            ) { Text("Add", color = LocalContentColor.current, style = MaterialTheme.typography.titleMedium) }
         }
+    }
+}
+
+@Composable
+fun StorageScreen() {
+    val nav = LocalNav.current
+    val ctx = LocalContext.current
+    val app = App.it
+    val scope = rememberCoroutineScope()
+    var cleared by remember { mutableIntStateOf(0) }
+    val storage by produceState(listOf(0L, 0L, 0L, 0L), cleared) { value = withContext(Dispatchers.IO) { storageBytes(ctx) } }
+    val traffic by produceState<Pair<Long?, Long?>>(null to null) { value = withContext(Dispatchers.IO) { monthTraffic(ctx) } }
+    fun clear(action: () -> Unit) {
+        scope.launch {
+            withContext(Dispatchers.IO) { action() }
+            cleared++
+        }
+    }
+    SettingsPage("Storage") {
         item {
-            Section("Storage", wide) {
-                fun clear(action: () -> Unit) {
-                    scope.launch {
-                        withContext(Dispatchers.IO) { action() }
-                        cleared++
-                    }
-                }
+            Section {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                     Text("${formatBytes(storage.sum())} on this phone", style = MaterialTheme.typography.titleMedium)
                     Row(Modifier.padding(top = 10.dp).fillMaxWidth().height(10.dp).clip(CircleShape).background(Color.White.copy(alpha = .1f))) {
@@ -602,22 +908,47 @@ fun SettingsScreen(onLogout: () -> Unit) {
             }
         }
         item {
-            Section("Data used this month", wide) {
+            Section("Data used this month") {
                 val (wifiBytes, mobileBytes) = traffic
-                SettingRow("Wi-Fi", "Streaming at ${quality(wifi)}") { Text(wifiBytes?.let(::formatBytes) ?: "—") }
-                SettingRow("Mobile data", "Streaming at ${quality(mobile)}") { Text(mobileBytes?.let(::formatBytes) ?: "—") }
-                Text(
-                    "Counted by Android, so it can lag by an hour or two.", style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
-                )
+                SettingRow("Wi-Fi", "Streaming at ${quality(app.prefs.streamBitrateWifi)}", icon = Icons.Rounded.Wifi, tint = Sub) { Text(wifiBytes?.let(::formatBytes) ?: "—") }
+                SettingRow("Mobile data", "Streaming at ${quality(app.prefs.streamBitrateMobile)}", icon = Icons.Rounded.SignalCellularAlt, tint = Sub) {
+                    Text(mobileBytes?.let(::formatBytes) ?: "—")
+                }
             }
         }
         item {
-            Section("About", wide) {
-                SettingRow("Navidroid", "Version ${remember { ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName }}")
+            Text(
+                "Counted by Android, so it can lag by an hour or two.", SettingsWidth.padding(horizontal = 20.dp, vertical = 8.dp),
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
+}
+
+@Composable
+fun AboutScreen() {
+    val ctx = LocalContext.current
+    val links = LocalUriHandler.current
+    // No browser to open it with is not worth a crash.
+    fun open(url: String) = runCatching { links.openUri(url) }
+    SettingsPage("About") {
+        item {
+            Column(SettingsWidth.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                LauncherIcon(icons[remember { currentIcon(ctx) }].res, 80.dp)
+                Text("Navidroid", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.headlineSmall)
+                Text("Version ${appVersion(ctx)}", style = MaterialTheme.typography.bodySmall)
             }
         }
-        item { BottomSpacer() }
+        item {
+            Section {
+                NavRow("Source code", REPO.substringAfter("://"), Icons.Rounded.Code, Sub) { open(REPO) }
+                NavRow("Report a problem", "Open an issue on GitHub", Icons.Rounded.BugReport, Sub) { open("$REPO/issues") }
+                SettingRow(
+                    "Licenses", "Navidroid is MIT licensed. It is built on Jetpack Compose, Media3, OkHttp and Coil (Apache 2.0) and set in Figtree (OFL).",
+                    { open("$REPO/blob/main/LICENSE") }, Icons.Rounded.Gavel, Sub,
+                )
+            }
+        }
     }
 }
 
@@ -912,7 +1243,7 @@ fun HiddenPlaylistsScreen() {
 /** The figures on top of a cache page. */
 @Composable
 private fun CacheSummary(title: String, about: String) =
-    Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = .06f)).padding(16.dp)) {
+    Column(Modifier.padding(horizontal = 16.dp).fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Color.White.copy(alpha = .06f)).padding(16.dp)) {
         Text(title, style = MaterialTheme.typography.titleLarge)
         Text(about, style = MaterialTheme.typography.bodySmall)
     }

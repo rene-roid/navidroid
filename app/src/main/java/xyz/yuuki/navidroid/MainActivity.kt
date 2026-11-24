@@ -108,6 +108,13 @@ import xyz.yuuki.navidroid.ui.HiddenPlaylistsScreen
 import xyz.yuuki.navidroid.ui.SongCacheScreen
 import xyz.yuuki.navidroid.ui.ImageCacheScreen
 import xyz.yuuki.navidroid.ui.SavedInfoScreen
+import xyz.yuuki.navidroid.ui.PlaybackSettingsScreen
+import xyz.yuuki.navidroid.ui.DownloadSettingsScreen
+import xyz.yuuki.navidroid.ui.ServerScreen
+import xyz.yuuki.navidroid.ui.StorageScreen
+import xyz.yuuki.navidroid.ui.AboutScreen
+import xyz.yuuki.navidroid.ui.forgetAccount
+import java.io.File
 import xyz.yuuki.navidroid.ui.migrateIcon
 import xyz.yuuki.navidroid.ui.Sub
 import xyz.yuuki.navidroid.ui.isTablet
@@ -163,6 +170,12 @@ class MainActivity : ComponentActivity() {
         prefs.token = null
         prefs.salt = null
         prefs.endpoints = emptyList()
+        prefs.username = null
+        prefs.active = null
+        prefs.pendingScrobbles = emptyList()
+        forgetAccount()
+        File(filesDir, "queue.json").delete()
+        App.it.api.clearSaved()
         loggedIn = false
     }
 
@@ -242,6 +255,11 @@ private fun Shell(onLogout: () -> Unit) {
                                     Route.SongCache -> SongCacheScreen()
                                     Route.ImageCache -> ImageCacheScreen()
                                     Route.SavedInfo -> SavedInfoScreen()
+                                    Route.Playback -> PlaybackSettingsScreen()
+                                    Route.DownloadSettings -> DownloadSettingsScreen()
+                                    Route.Server -> ServerScreen()
+                                    Route.Storage -> StorageScreen()
+                                    Route.About -> AboutScreen()
                                     is Route.More -> MoreScreen(r.section)
                                     is Route.Open -> if (r.kind == Kind.Artist) ArtistScreen(r.id) else CollectionScreen(r.kind, r.id)
                                 }

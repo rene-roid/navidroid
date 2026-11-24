@@ -213,3 +213,12 @@ fun buildHome(
     }
     return Home(greeting, quick, sections)
 }
+
+/** "Listening now" cards: what others (and your other devices) play, leaving out this phone's own entry. */
+fun listeningTiles(entries: List<Listener>, me: String?, playingHere: String?) = entries
+    .filterNot { it.user == me && it.player == "navidroid" && it.song.id == playingHere }
+    .mapNotNull { l ->
+        val who = if (l.user == me) "You" else l.user
+        val ago = if (l.minutesAgo > 0) " • ${l.minutesAgo} min ago" else ""
+        l.song.albumId?.let { Tile(Kind.Album, it, l.song.title, "$who on ${l.player}$ago", l.song.coverArt) }
+    }
