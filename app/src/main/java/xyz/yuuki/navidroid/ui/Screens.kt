@@ -134,6 +134,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import xyz.yuuki.navidroid.App
 import xyz.yuuki.navidroid.Collection
@@ -143,6 +144,7 @@ import xyz.yuuki.navidroid.Pin
 import xyz.yuuki.navidroid.Tile
 import xyz.yuuki.navidroid.buildHome
 import xyz.yuuki.navidroid.likedTile
+import xyz.yuuki.navidroid.listeningTiles
 import xyz.yuuki.navidroid.list
 import xyz.yuuki.navidroid.tile
 import xyz.yuuki.navidroid.withOthers
@@ -198,6 +200,12 @@ fun HomeScreen() {
         api.networkChanged(true)
         home.refresh()
     }
+    val here = LocalPlayer.current?.song?.id
+    // Polled only while Home is on screen; a server that won't say just shows nothing.
+    val listeners by remember {
+        flow { while (true) { emit(runCatching { api.listeners() }.getOrDefault(emptyList())); delay(30_000) } }
+    }.collectAsStateWithLifecycle(emptyList())
+    val listening = remember(listeners, here) { listeningTiles(listeners, App.it.prefs.username, here) }
     PullToRefreshBox(home.loading && home.data != null, refresh, Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize()) {
             item("top") {
@@ -216,6 +224,12 @@ fun HomeScreen() {
             if (!online || (home.data == null && home.error != null)) item("offline") { OfflineHome(pinnedTiles(pins)) }
             home.data?.let { h ->
                 item("quick") { QuickGrid(h.quick.filter(Hidden::shows)) }
+                if (online && listening.isNotEmpty()) item("listening") {
+                    SectionHeader("Listening now")
+                    LazyRow(contentPadding = PaddingValues(horizontal = 10.dp)) {
+                        items(listening, key = { "${it.id}:${it.subtitle}" }) { Card(it) }
+                    }
+                }
                 items(h.sections.map { it.copy(tiles = it.tiles.filter(Hidden::shows)) }.filter { it.tiles.isNotEmpty() }, key = { it.key }) { s ->
                     SectionHeader(s.title) { nav.go(Route.More(s.key)) }
                     LazyRow(contentPadding = PaddingValues(horizontal = 10.dp)) {

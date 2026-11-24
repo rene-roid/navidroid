@@ -173,6 +173,12 @@ data class ArtistPage(val artist: Artist, val albums: List<Album>, val top: List
 }
 data class SearchResult(val artists: List<Artist>, val albums: List<Album>, val songs: List<Song>)
 data class Genre(val name: String, val songCount: Int)
+/** Someone playing from the server right now, as `getNowPlaying` lists them. */
+data class Listener(val user: String, val player: String, val minutesAgo: Int, val song: Song) {
+    companion object {
+        fun from(o: JSONObject) = Listener(o.s("username") ?: "", o.s("playerName") ?: "", o.optInt("minutesAgo"), Song.from(o))
+    }
+}
 data class LyricLine(val ms: Long, val text: String)
 data class Lyrics(val synced: Boolean, val lines: List<LyricLine>)
 
@@ -627,6 +633,9 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
         similar.ifEmpty { call("getRandomSongs", "size" to 50).optJSONObject("randomSongs")?.list("song")?.map(Song::from).orEmpty().fresh() }
             .shuffled().take(20)
     }
+
+    /** Everyone the server says is playing; servers that keep this to admins answer with an error, so callers treat a failure as nobody. */
+    suspend fun listeners() = call("getNowPlaying").optJSONObject("nowPlaying")?.list("entry").orEmpty().map(Listener::from)
 
     suspend fun search(q: String): SearchResult {
         val r = call("search3", "query" to q, "artistCount" to 6, "albumCount" to 12, "songCount" to 30)
