@@ -42,6 +42,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
@@ -139,7 +140,7 @@ fun JamSheet(onDismiss: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var name by remember { mutableStateOf(s.name) }
     val live = session
-    ModalBottomSheet(onDismiss, containerColor = Elevated) {
+    ModalBottomSheet(onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = Elevated) {
         Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(if (live == null) "Start a Jam" else "Your Jam", style = MaterialTheme.typography.titleLarge)
             if (live == null) Text("Friends on your Wi-Fi open a link and pick songs for your queue. They don't need the app.", style = MaterialTheme.typography.bodySmall)
