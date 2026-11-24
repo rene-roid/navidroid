@@ -42,6 +42,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.SettableFuture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -89,6 +90,7 @@ class PlaybackService : MediaSessionService() {
     private val queueFile by lazy { File(filesDir, "queue.json") }
     private val buttons = Handler(Looper.getMainLooper())
     private var presses = 0
+    private var restoring: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -111,6 +113,7 @@ class PlaybackService : MediaSessionService() {
             .build()
         player.addListener(Scrobbler(player, scope))
         player.addListener(Autoplay(player, scope))
+        player.addListener(WidgetFeed(app, player, scope))
         player.addListener(object : Player.Listener {
             private var retries = 0
 
@@ -176,7 +179,7 @@ class PlaybackService : MediaSessionService() {
             })
             .build()
 
-        restoreQueue(player)
+        restoring = restoreQueue(player)
         scope.launch {
             while (isActive) {
                 delay(15_000)
@@ -186,6 +189,16 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
+
+    // A widget button can be what starts the process, and would then get here ahead of the saved queue.
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        scope.launch {
+            restoring?.join()
+            super.onStartCommand(intent, flags, startId)
+            if (intent?.getBooleanExtra(EXTRA_PLAY, false) == true) Util.handlePlayButtonAction(session?.player)
+        }
+        return START_STICKY
+    }
 
     override fun onDestroy() {
         buttons.removeCallbacksAndMessages(null)
@@ -213,7 +226,7 @@ class PlaybackService : MediaSessionService() {
         scope.launch(Dispatchers.IO) { queueFile.writeText(json) }
     }
 
-    private fun restoreQueue(player: Player) {
+    private fun restoreQueue(player: Player) =
         scope.launch {
             val o = withContext(Dispatchers.IO) { runCatching { JSONObject(queueFile.readText()) }.getOrNull() } ?: return@launch
             val songs = o.getJSONArray("items").objects().map { Song.from(it).toMediaItem(it.s("auto")) }
@@ -224,7 +237,6 @@ class PlaybackService : MediaSessionService() {
             player.playlistMetadata = MediaMetadata.Builder().setTitle(o.s("from")).build()
             player.prepare()
         }
-    }
 }
 
 /**
