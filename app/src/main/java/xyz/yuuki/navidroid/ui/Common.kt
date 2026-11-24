@@ -147,6 +147,8 @@ sealed interface Route {
     data object About : Route
     data class Open(val kind: Kind, val id: String) : Route
     data class More(val section: String) : Route
+    /** A Jam joined as a guest; [base] is its link. */
+    data class Jam(val base: String) : Route
 }
 
 class Nav {

@@ -69,6 +69,8 @@ import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -510,13 +512,19 @@ fun SearchScreen() {
                         Text("Albums you haven't played yet", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(bottom = 6.dp))
                         LazyRow { items(albums, key = { it.id }) { a -> ShelfCard(Recent.of(a)) { nav.go(Route.Open(Kind.Album, a.id)) } } }
                     }
-                    Row(
-                        Modifier.padding(top = 12.dp).clip(CircleShape).background(Tile)
-                            .clickable { scope.launch { runCatching { player?.play(api.randomSongs(100), from = "Your library") } } }.padding(horizontal = 16.dp, vertical = 10.dp),
+                    var joining by remember { mutableStateOf(false) }
+                    if (joining) JoinJam { joining = false }
+                    @Composable
+                    fun pill(label: String, icon: ImageVector, onClick: () -> Unit) = Row(
+                        Modifier.clip(CircleShape).background(Tile).clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Icon(Icons.Rounded.Shuffle, null, Modifier.size(20.dp))
-                        Text("Shuffle your library", style = MaterialTheme.typography.labelLarge)
+                        Icon(icon, null, Modifier.size(20.dp))
+                        Text(label, style = MaterialTheme.typography.labelLarge)
+                    }
+                    FlowRow(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        pill("Shuffle your library", Icons.Rounded.Shuffle) { scope.launch { runCatching { player?.play(api.randomSongs(100), from = "Your library") } } }
+                        pill("Join a Jam", Icons.Rounded.Groups) { joining = true }
                     }
                 }
             }

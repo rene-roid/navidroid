@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#121212">
+<title>Jam</title>
+<style>
+  :root { --bg: #121212; --surface: #1f1f1f; --tile: #2a2a2a; --accent: #0085ff; --sub: #b3b3b3; --faint: #7a7a7a; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: #fff; font: 16px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
+  main { max-width: 560px; margin: 0 auto; padding: 16px 16px calc(32px + env(safe-area-inset-bottom)); }
+  h1 { font-size: 26px; font-weight: 800; letter-spacing: -.3px; margin: 8px 0 2px; overflow-wrap: anywhere; }
+  h2 { font-size: 20px; font-weight: 700; margin: 28px 0 8px; }
+  .sub { color: var(--sub); font-size: 13px; overflow-wrap: anywhere; }
+  .by { color: var(--accent); }
+  button, input { font: inherit; color: inherit; }
+  button { border: 0; border-radius: 999px; background: var(--accent); color: #fff; font-weight: 700; font-size: 14px; padding: 0 18px; min-height: 44px; cursor: pointer; }
+  button.quiet { background: var(--tile); }
+  button.icon { background: none; color: var(--sub); padding: 0; width: 44px; font-size: 18px; flex: none; }
+  button:disabled { background: var(--tile); color: var(--faint); cursor: default; }
+  button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  input { width: 100%; min-height: 48px; border: 2px solid transparent; border-radius: 14px; background: var(--surface); padding: 0 14px; }
+  input:focus { border-color: var(--accent); outline: none; }
+  input::placeholder { color: var(--faint); }
+  a { color: var(--accent); }
+  .wide { width: 100%; min-height: 52px; font-size: 16px; margin-top: 12px; }
+  .now { display: flex; gap: 14px; align-items: center; background: var(--surface); border-radius: 14px; padding: 12px; margin-top: 16px; }
+  .now img, .now .blank { width: 88px; height: 88px; border-radius: 8px; flex: none; }
+  .now .title { font-size: 18px; font-weight: 700; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 6px 0; }
+  .row img, .row .blank { width: 48px; height: 48px; border-radius: 4px; flex: none; }
+  img, .blank { background: var(--tile); object-fit: cover; }
+  .text { flex: 1; min-width: 0; }
+  .text > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .bar { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .2); margin-top: 10px; overflow: hidden; }
+  .bar > div { height: 100%; width: 0; background: #fff; }
+  .times { display: flex; justify-content: space-between; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .note { margin: 8px 0; }
+  #toast { position: fixed; left: 16px; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); margin: 0 auto; max-width: 528px; background: #fff; color: #000; border-radius: 10px; padding: 12px 14px; font-size: 14px; font-weight: 600; opacity: 0; transform: translateY(8px); transition: opacity .15s, transform .15s; pointer-events: none; }
+  #toast.on { opacity: 1; transform: none; }
+  [hidden] { display: none !important; }
+  @media (prefers-reduced-motion: reduce) { #toast { transition: none; } }
+</style>
+</head>
+<body>
+<main>
+  <section id="join" hidden>
+    <h1>Join the Jam</h1>
+    <p class="sub">Pick songs for the music that's playing. Your name shows next to what you add.</p>
+    <form id="joinForm">
+      <input id="name" maxlength="24" autocomplete="nickname" placeholder="Your name" aria-label="Your name" required>
+      <button class="wide">Join</button>
+    </form>
+    <p class="sub">Have navidroid? <a class="app">Open the Jam in the app</a></p>
+  </section>
+
+  <section id="ended" hidden>
+    <h1>This Jam has ended</h1>
+    <p class="sub">Ask the host for a new link.</p>
+  </section>
+
+  <section id="jam" hidden>
+    <h1 id="jamName"></h1>
+    <div class="sub" id="people"></div>
+    <div class="sub note" id="offline" hidden>Can't reach the host. Trying again…</div>
+
+    <div class="now" id="now"></div>
+    <button class="quiet wide" id="skip" hidden></button>
+
+    <h2>Add a song</h2>
+    <input id="q" type="search" enterkeyhint="search" autocomplete="off" placeholder="Search songs" aria-label="Search songs">
+    <div class="sub note" id="addNote" hidden></div>
+    <div id="results"></div>
+
+    <h2>Up next</h2>
+    <div id="queue"></div>
+
+    <p class="sub" style="margin-top:28px">Have navidroid? <a class="app">Open the Jam in the app</a></p>
+  </section>
+</main>
+<div id="toast" role="status"></div>
+<script>
+const base = location.pathname.replace(/\/+$/, '');
+const key = 'jam:' + base.split('/').pop();
+const $ = id => document.getElementById(id);
+const store = { get: () => { try { return localStorage.getItem(key); } catch (e) { return null; } }, set: v => { try { localStorage.setItem(key, v); } catch (e) {} } };
+let gid = store.get(), state = null, syncedAt = 0, results = [], shown = {};
+
+// Names and titles come from other people: they only ever go in as text.
+function h(tag, props, ...kids) {
+  const e = Object.assign(document.createElement(tag), props || {});
+  e.append(...kids.filter(k => k != null));
+  return e;
+}
+const cover = id => id ? h('img', { src: base + '/cover/' + encodeURIComponent(id), alt: '', loading: 'lazy' }) : h('div', { className: 'blank' });
+const time = ms => { const s = Math.max(0, Math.floor(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+
+async function call(path, params, post) {
+  const r = await fetch(base + path + '?' + new URLSearchParams({ g: gid || '', ...params }), { method: post ? 'POST' : 'GET', cache: 'no-store' });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(body.error || 'Something went wrong'), { status: r.status });
+  return body;
+}
+
+let toastTimer;
+function toast(text) {
+  $('toast').textContent = text;
+  $('toast').classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $('toast').classList.remove('on'), 2600);
+}
+const act = (path, params, done) => call(path, params, true).then(() => { if (done) toast(done); poll(); }).catch(e => toast(e.message));
+
+function show(id) { for (const s of ['join', 'ended', 'jam']) $(s).hidden = s !== id; }
+
+// Redraws a part only when what it shows changed, so covers don't flicker at every poll.
+function draw(id, data, build) {
+  const k = JSON.stringify(data);
+  if (shown[id] === k) return;
+  shown[id] = k;
+  $(id).replaceChildren(...build());
+}
+
+function song(s, ...trailing) {
+  return h('div', { className: 'row' }, cover(s.coverArt),
+    h('div', { className: 'text' }, h('div', { textContent: s.title }),
+      h('div', { className: 'sub' }, s.artist, s.by ? h('span', { className: 'by', textContent: ' · Added by ' + s.by }) : null)),
+    ...trailing);
+}
+
+function render() {
+  const s = state;
+  document.title = s.name;
+  $('jamName').textContent = s.name;
+  $('people').textContent = 'You are ' + s.you + ' · ' + s.guests.length + (s.guests.length === 1 ? ' guest' : ' guests') + (s.guests.length > 1 ? ': ' + s.guests.join(', ') : '');
+  draw('now', s.now, () => s.now ? [cover(s.now.coverArt), h('div', { className: 'text' },
+    h('div', { className: 'title', textContent: s.now.title }), h('div', { className: 'sub', textContent: s.now.artist }),
+    s.now.by ? h('div', { className: 'sub by', textContent: 'Added by ' + s.now.by }) : null,
+    h('div', { className: 'bar' }, h('div', { id: 'fill' })),
+    h('div', { className: 'sub times' }, h('span', { id: 'pos' }), h('span', { textContent: time(s.now.duration * 1000) })))]
+    : [h('div', { className: 'sub', textContent: 'Nothing is playing. Add a song to start.' })]);
+  $('skip').hidden = !s.votesNeeded || !s.now;
+  $('skip').disabled = s.voted;
+  $('skip').textContent = (s.voted ? 'You voted to skip' : 'Vote to skip') + ' · ' + s.votes + ' of ' + s.votesNeeded;
+  const full = s.maxPerGuest > 0 && s.mine >= s.maxPerGuest;
+  $('addNote').hidden = s.canAdd && !full;
+  $('addNote').textContent = !s.canAdd ? 'The host turned off adding songs for now.' : 'You have ' + s.mine + ' of ' + s.maxPerGuest + ' songs waiting. Add more once one has played.';
+  const queued = new Set(s.queue.map(x => x.id));
+  draw('results', [results, s.canAdd, full, [...queued]], () => results.map(x => song(x,
+    h('button', { textContent: queued.has(x.id) ? 'Added' : 'Add', disabled: !s.canAdd || full || queued.has(x.id), onclick: () => act('/add', { id: x.id }, 'Added ' + x.title) }))));
+  draw('queue', [s.queue, s.you], () => s.queue.length ? s.queue.map(x => song(x,
+    x.by === s.you ? h('button', { className: 'icon', textContent: '✕', ariaLabel: 'Remove ' + x.title, onclick: () => act('/remove', { index: x.index, id: x.id }) }) : null))
+    : [h('div', { className: 'sub', textContent: 'Nothing queued yet.' })]);
+  tick();
+}
+
+function tick() {
+  if (!state || !state.now || !$('fill')) return;
+  const dur = state.now.duration * 1000;
+  const pos = Math.min(dur || Infinity, state.positionMs + (state.playing ? Date.now() - syncedAt : 0));
+  $('fill').style.width = (dur ? pos / dur * 100 : 0) + '%';
+  $('pos').textContent = time(pos);
+}
+
+async function poll() {
+  if (!gid) return show('join');
+  try {
+    state = await call('/state');
+    syncedAt = Date.now();
+    $('offline').hidden = true;
+    show('jam');
+    render();
+  } catch (e) {
+    if (e.status === 401) { gid = null; show('join'); }
+    else if (e.status === 403) show('ended');
+    else if (state) $('offline').hidden = false;
+    else show('ended');
+  }
+}
+
+$('joinForm').onsubmit = async e => {
+  e.preventDefault();
+  try {
+    gid = (await call('/join', { name: $('name').value }, true)).id;
+    store.set(gid);
+    poll();
+  } catch (err) { if (err.status === 403 && !/full/.test(err.message)) show('ended'); else toast(err.message); }
+};
+
+let searchTimer, searchN = 0;
+$('q').oninput = () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(async () => {
+    const n = ++searchN, q = $('q').value.trim();
+    try {
+      const found = q ? (await call('/search', { q })).songs : [];
+      if (n !== searchN) return;
+      results = found;
+      if (q && !found.length) toast('No songs found');
+      if (state) render();
+    } catch (e) { toast(e.message); }
+  }, 300);
+};
+$('skip').onclick = () => act('/skip');
+for (const a of document.querySelectorAll('.app')) a.href = 'navidroid://jam?url=' + encodeURIComponent(location.origin + base);
+
+setInterval(() => { if (!document.hidden) poll(); }, 2500);
+setInterval(tick, 500);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
+poll();
+</script>
+</body>
+</html>

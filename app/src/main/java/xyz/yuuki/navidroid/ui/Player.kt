@@ -9,6 +9,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.text.TextStyle
 import xyz.yuuki.navidroid.auto
+import xyz.yuuki.navidroid.jam
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -101,14 +102,16 @@ import androidx.media3.session.MediaController
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import xyz.yuuki.navidroid.App
+import xyz.yuuki.navidroid.Jam
+import androidx.compose.runtime.collectAsState
 import xyz.yuuki.navidroid.Kind
 import xyz.yuuki.navidroid.Song
 import xyz.yuuki.navidroid.song
 import xyz.yuuki.navidroid.toMediaItem
 import kotlin.math.abs
 
-/** A song waiting in the queue at timeline [index]. [auto]: the song it was picked to follow, when the app queued it and not the user. */
-data class Queued(val index: Int, val song: Song, val auto: String?)
+/** A song waiting in the queue at timeline [index]. [auto]: the song it was picked to follow, when the app queued it and not the user. [jam]: the Jam guest who added it. */
+data class Queued(val index: Int, val song: Song, val auto: String?, val jam: String? = null)
 
 /** Compose-observable view of the playback service's MediaController. */
 class PlayerState(val c: MediaController) : Player.Listener {
@@ -149,7 +152,7 @@ class PlayerState(val c: MediaController) : Player.Listener {
         upNext = if (t.isEmpty) emptyList() else buildList {
             var i = t.getNextWindowIndex(c.currentMediaItemIndex, Player.REPEAT_MODE_OFF, c.shuffleModeEnabled)
             while (i != C.INDEX_UNSET && size < 200) {
-                c.getMediaItemAt(i).run { song?.let { add(Queued(i, it, auto)) } }
+                c.getMediaItemAt(i).run { song?.let { add(Queued(i, it, auto, jam)) } }
                 i = t.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, c.shuffleModeEnabled)
             }
         }
@@ -264,6 +267,7 @@ fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
             }
             item("seek") { Seek(p, song, pos) }
             item("controls") { Controls(p) }
+            item("jam") { JamPill(Modifier.padding(top = 4.dp)) }
             lyrics.data?.let { l -> item("lyrics") { LyricsCard(p, l, pos, color) } }
             if (p.upNext.isNotEmpty()) item("next") { QueueHeader(p, Modifier.padding(start = 24.dp, top = 28.dp, end = 8.dp), MaterialTheme.typography.titleLarge) }
             queue(p, start = 24.dp)
@@ -281,6 +285,8 @@ private fun QueueHeader(p: PlayerState, modifier: Modifier, style: TextStyle) {
     var open by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf<List<Song>?>(null) }
     saving?.let { NewPlaylist(it) { saving = null } }
+    var jam by remember { mutableStateOf(false) }
+    if (jam) JamSheet { jam = false }
     Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text("Up next", style = style, modifier = Modifier.weight(1f))
         Box {
@@ -288,6 +294,7 @@ private fun QueueHeader(p: PlayerState, modifier: Modifier, style: TextStyle) {
             DropdownMenu(open, { open = false }, containerColor = Elevated) {
                 DropdownMenuItem({ Text("Clear queue") }, { open = false; p.remove(p.upNext) }, enabled = p.upNext.isNotEmpty())
                 DropdownMenuItem({ Text("Save queue as playlist") }, { open = false; saving = p.queue() })
+                DropdownMenuItem({ Text(if (Jam.session.collectAsState().value == null) "Start a Jam" else "Jam settings") }, { open = false; jam = true })
             }
         }
     }
@@ -311,7 +318,7 @@ private fun LazyListScope.queue(p: PlayerState, start: Dp, cover: Dp = 44.dp) = 
             Cover(s.coverArt, 120, Modifier.size(cover))
             Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                 Text(s.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(s.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(if (q.jam != null) "${s.artist} · Added by ${q.jam}" else s.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             IconButton({ p.c.removeMediaItem(i) }) { Icon(Icons.Rounded.Close, "Remove", tint = Sub) }
         }

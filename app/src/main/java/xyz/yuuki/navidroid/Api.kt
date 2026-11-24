@@ -370,6 +370,9 @@ class Prefs(account: String, open: (String) -> SharedPreferences) {
     // Discover: radio and autoplay put songs you haven't played first
     var radioFresh by bool("radioFresh", true, device)
 
+    /** Jams: the host's settings, as [JamSettings] JSON. */
+    var jam by str("jam", device)
+
     val loggedIn get() = token != null && endpoints.isNotEmpty()
 
     /** The aurora's switches, so the phone's like the rest of its look. */
