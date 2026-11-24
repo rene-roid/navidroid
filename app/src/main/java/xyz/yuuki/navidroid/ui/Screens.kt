@@ -1139,11 +1139,11 @@ private fun EditForm(e: PlaylistEdit, c: Collection) {
     Column(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 56.dp, start = 16.dp, end = 16.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Edit playlist", style = MaterialTheme.typography.headlineSmall)
         OutlinedTextField(
-            e.name, { e.name = it }, Modifier.fillMaxWidth(), singleLine = true, colors = fieldColors, label = { Text("Name") }, isError = e.name.isBlank(),
+            e.name, { e.name = it }, Modifier.fillMaxWidth(), singleLine = true, shape = fieldShape, colors = fieldColors, placeholder = { Text("Name") }, isError = e.name.isBlank(),
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
         )
         OutlinedTextField(
-            e.comment, { e.comment = it }, Modifier.fillMaxWidth(), maxLines = 4, colors = fieldColors, label = { Text("Description") },
+            e.comment, { e.comment = it }, Modifier.fillMaxWidth(), maxLines = 4, shape = fieldShape, colors = fieldColors, placeholder = { Text("Description") },
             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
         )
         Row(verticalAlignment = Alignment.CenterVertically) {

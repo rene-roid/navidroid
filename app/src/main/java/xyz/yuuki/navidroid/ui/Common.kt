@@ -600,13 +600,15 @@ fun TrackRow(song: Song, onClick: () -> Unit, number: Int? = null, showArt: Bool
     val player = LocalPlayer.current
     val current = player?.song?.id == song.id
     val states by App.it.offline.states.collectAsStateWithLifecycle()
-    val swipe = rememberSwipeToDismissBoxState(confirmValueChange = {
-        if (it == SwipeToDismissBoxValue.StartToEnd) {
+    // confirmValueChange runs for every settle attempt of a gesture; the value itself changes once per swipe, so act on that.
+    val swipe = rememberSwipeToDismissBoxState()
+    LaunchedEffect(swipe.currentValue) {
+        if (swipe.currentValue == SwipeToDismissBoxValue.StartToEnd) {
             player?.enqueue(listOf(song))
             toast("Added to queue")
+            swipe.reset()
         }
-        false
-    })
+    }
     SwipeToDismissBox(
         swipe, {
             if (swipe.dismissDirection == SwipeToDismissBoxValue.StartToEnd) Box(Modifier.fillMaxSize().padding(start = 20.dp), contentAlignment = Alignment.CenterStart) {

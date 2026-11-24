@@ -182,7 +182,7 @@ val fieldColors @Composable get() = OutlinedTextFieldDefaults.colors(
     focusedTrailingIconColor = Sub, unfocusedTrailingIconColor = Sub, focusedSupportingTextColor = Faint, unfocusedSupportingTextColor = Faint,
 )
 
-private val fieldShape = RoundedCornerShape(14.dp)
+internal val fieldShape = RoundedCornerShape(14.dp)
 
 /** A server address being typed and what answered at it; [result] is null while it is blank or being checked. */
 internal class ServerField {

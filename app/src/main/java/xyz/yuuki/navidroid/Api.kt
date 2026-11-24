@@ -135,7 +135,7 @@ data class Playlist(
     companion object {
         fun from(o: JSONObject) = Playlist(
             o.getString("id"), o.s("name") ?: "", o.s("comment") ?: "", o.s("owner") ?: "",
-            o.optInt("songCount"), o.optInt("duration"), o.s("coverArt"), o.has("validUntil"), o.optBoolean("public"),
+            o.optInt("songCount"), o.optInt("duration"), o.s("coverArt") ?: "pl-" + o.getString("id"), o.has("validUntil"), o.optBoolean("public"),
         )
     }
 }
