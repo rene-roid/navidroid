@@ -368,7 +368,7 @@ class Prefs(account: String, open: (String) -> SharedPreferences) {
         set(v) = p.edit().putString("scrobbles", v.joinToString("\n")).apply()
 
     // Discover: radio and autoplay put songs you haven't played first
-    var radioFresh by bool("radioFresh", true)
+    var radioFresh by bool("radioFresh", true, device)
 
     val loggedIn get() = token != null && endpoints.isNotEmpty()
 
