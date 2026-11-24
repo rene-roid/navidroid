@@ -51,13 +51,14 @@ data class Song(
     val bitRate: Int,
     /** Every credited artist as (id, name), when the server lists them. */
     val artists: List<Pair<String, String>> = emptyList(),
+    val genre: String? = null,
 ) {
     /** Same field names as the Subsonic response, so [from] reads both API and saved JSON. */
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("title", title).put("artist", artist).put("artistId", artistId)
         .put("album", album).put("albumId", albumId).put("coverArt", coverArt)
         .put("duration", duration).put("track", track).put("year", year)
-        .put("suffix", suffix).put("bitRate", bitRate)
+        .put("suffix", suffix).put("bitRate", bitRate).put("genre", genre)
         .put("artists", JSONArray(artists.map { JSONObject().put("id", it.first).put("name", it.second) }))
         .apply { if (starred) put("starred", "1") }
 
@@ -77,6 +78,7 @@ data class Song(
             suffix = o.s("suffix"),
             bitRate = o.optInt("bitRate"),
             artists = o.optJSONArray("artists").objects().mapNotNull { a -> a.s("id")?.let { it to (a.s("name") ?: "") } },
+            genre = o.s("genre"),
         )
     }
 }
@@ -179,6 +181,23 @@ data class Listener(val user: String, val player: String, val minutesAgo: Int, v
         fun from(o: JSONObject) = Listener(o.s("username") ?: "", o.s("playerName") ?: "", o.optInt("minutesAgo"), Song.from(o))
     }
 }
+
+/** Something opened or played from search. [song] is there for a song, which plays; the rest open their [kind] of page. */
+data class Recent(val kind: Kind?, val id: String, val title: String, val subtitle: String, val coverArt: String?, val song: Song? = null) {
+    fun toJson(): JSONObject = JSONObject().put("kind", kind?.name).put("id", id).put("title", title).put("subtitle", subtitle)
+        .put("coverArt", coverArt).put("song", song?.toJson())
+
+    companion object {
+        fun from(o: JSONObject) = Recent(
+            o.s("kind")?.let(Kind::valueOf), o.getString("id"), o.getString("title"), o.optString("subtitle"), o.s("coverArt"), o.optJSONObject("song")?.let(Song::from),
+        )
+
+        fun of(s: Song) = Recent(null, s.id, s.title, "Song • ${s.artist}", s.coverArt, s)
+
+        /** [r] put first in [list], which keeps one entry per thing and the newest 15. */
+        fun add(list: List<Recent>, r: Recent) = (listOf(r) + list.filterNot { it.kind == r.kind && it.id == r.id }).take(15)
+    }
+}
 data class LyricLine(val ms: Long, val text: String)
 data class Lyrics(val synced: Boolean, val lines: List<LyricLine>)
 
@@ -218,6 +237,16 @@ fun <T> interleave(own: List<T>, others: List<T>): List<T> {
     }
 }
 
+/**
+ * A song radio out of its [sources], the best first: no repeats, never [seed] or anything in [exclude],
+ * and the seed's own artist only every third song while there are others to put between.
+ */
+fun radioMix(seed: Song, sources: List<List<Song>>, exclude: Set<String> = emptySet(), limit: Int = 40): List<Song> {
+    val (own, others) = sources.flatten().filter { it.id != seed.id && it.id !in exclude }.distinctBy { it.id }
+        .partition { seed.artistId != null && it.artistId == seed.artistId }
+    return interleave(own, others).take(limit)
+}
+
 // ---- settings -------------------------------------------------------------------------------
 
 class Prefs(ctx: Context) {
@@ -241,7 +270,12 @@ class Prefs(ctx: Context) {
     var auroraBrightness by int("auroraBrightness", 100)
     var accent by int("accent", 0xFF0085FF.toInt())
     var lastSync by long("lastSync")
-    var autoplay by bool("autoplay", false)
+    var autoplay by bool("autoplay", true)
+
+    /** What was opened or played from search, newest first. */
+    var recentSearches: List<Recent>
+        get() = p.getString("recentSearches", null)?.let(::JSONArray).objects().map(Recent::from)
+        set(v) = p.edit().putString("recentSearches", JSONArray(v.map { it.toJson() }).toString()).apply()
 
     /** Playlist ids saved to the library; Subsonic can't star playlists, so they live here. */
     var savedPlaylists: Set<String>
@@ -641,8 +675,41 @@ class Api(private val prefs: Prefs, private val scope: CoroutineScope) {
     /** Everyone the server says is playing; servers that keep this to admins answer with an error, so callers treat a failure as nobody. */
     suspend fun listeners() = call("getNowPlaying").optJSONObject("nowPlaying")?.list("entry").orEmpty().map(Listener::from)
 
+    private suspend fun songs(method: String, key: String, vararg params: Pair<String, Any?>) =
+        call(method, *params).optJSONObject(key)?.list("song")?.map(Song::from).orEmpty()
+
+    suspend fun randomSongs(size: Int) = songs("getRandomSongs", "randomSongs", "size" to size)
+
+    /**
+     * Up to 40 songs to follow [seed]. Asks for more only while the mix is short or mostly the seed's own artist:
+     * songs like it, then the top songs of artists like its artist, then its genre, then the rest of its artist.
+     */
+    suspend fun songRadio(seed: Song, exclude: Set<String> = emptySet()): List<Song> {
+        val sources = mutableListOf<List<Song>>()
+        val loaders = listOf<suspend () -> List<Song>>(
+            { songs("getSimilarSongs2", "similarSongs2", "id" to seed.id, "count" to 50) },
+            {
+                val alike = seed.artistId?.let { call("getArtistInfo2", "id" to it, "count" to 8).optJSONObject("artistInfo2")?.list("similarArtist") }.orEmpty()
+                coroutineScope {
+                    alike.map { a -> async { runCatching { songs("getTopSongs", "topSongs", "artist" to a.s("name"), "count" to 5) }.getOrDefault(emptyList()) } }.awaitAll()
+                }.flatten().shuffled()
+            },
+            { seed.genre?.let { songs("getRandomSongs", "randomSongs", "size" to 40, "genre" to it) }.orEmpty() },
+            {
+                songs("search3", "searchResult3", "query" to seed.artist, "artistCount" to 0, "albumCount" to 0, "songCount" to 50)
+                    .filter { seed.artistId != null && it.artistId == seed.artistId }.shuffled()
+            },
+        )
+        for (load in loaders) {
+            sources += runCatching { load() }.getOrDefault(emptyList())
+            val mix = radioMix(seed, sources, exclude)
+            if (mix.size >= 40 && mix.count { it.artistId != seed.artistId } >= 26) break
+        }
+        return radioMix(seed, sources, exclude)
+    }
+
     suspend fun search(q: String): SearchResult {
-        val r = call("search3", "query" to q, "artistCount" to 6, "albumCount" to 12, "songCount" to 30)
+        val r = call("search3", "query" to q, "artistCount" to 20, "albumCount" to 20, "songCount" to 50)
             .optJSONObject("searchResult3") ?: JSONObject()
         return SearchResult(r.list("artist").map(Artist::from), r.list("album").map(Album::from), r.list("song").map(Song::from))
     }

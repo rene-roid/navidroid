@@ -1,6 +1,14 @@
 package xyz.yuuki.navidroid.ui
 
+import android.os.Bundle
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.TextStyle
+import xyz.yuuki.navidroid.auto
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -99,6 +107,9 @@ import xyz.yuuki.navidroid.song
 import xyz.yuuki.navidroid.toMediaItem
 import kotlin.math.abs
 
+/** A song waiting in the queue at timeline [index]. [auto]: the song it was picked to follow, when the app queued it and not the user. */
+data class Queued(val index: Int, val song: Song, val auto: String?)
+
 /** Compose-observable view of the playback service's MediaController. */
 class PlayerState(val c: MediaController) : Player.Listener {
     var song by mutableStateOf<Song?>(null)
@@ -111,8 +122,8 @@ class PlayerState(val c: MediaController) : Player.Listener {
     var from by mutableStateOf<String?>(null)
     var index by mutableStateOf(0)
 
-    /** Timeline indices in play order after the current one (follows shuffle). */
-    var upNext by mutableStateOf<List<Pair<Int, Song>>>(emptyList())
+    /** What plays after the current song, in play order (follows shuffle). */
+    var upNext by mutableStateOf<List<Queued>>(emptyList())
 
     init {
         c.addListener(this)
@@ -138,20 +149,29 @@ class PlayerState(val c: MediaController) : Player.Listener {
         upNext = if (t.isEmpty) emptyList() else buildList {
             var i = t.getNextWindowIndex(c.currentMediaItemIndex, Player.REPEAT_MODE_OFF, c.shuffleModeEnabled)
             while (i != C.INDEX_UNSET && size < 200) {
-                c.getMediaItemAt(i).song?.let { add(i to it) }
+                c.getMediaItemAt(i).run { song?.let { add(Queued(i, it, auto)) } }
                 i = t.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, c.shuffleModeEnabled)
             }
         }
     }
 
-    fun play(songs: List<Song>, start: Int = 0, shuffled: Boolean = false, from: String? = null) {
+    fun play(songs: List<Song>, start: Int = 0, shuffled: Boolean = false, from: String? = null, radio: Boolean = false) {
         if (songs.isEmpty()) return
         c.shuffleModeEnabled = shuffled
+        // Before the songs, so the service knows what kind of queue they are when they arrive.
+        c.playlistMetadata = MediaMetadata.Builder().setTitle(from).setExtras(Bundle().apply { putBoolean("radio", radio) }).build()
         c.setMediaItems(songs.map { it.toMediaItem() }, if (shuffled) songs.indices.random() else start, 0)
-        c.playlistMetadata = MediaMetadata.Builder().setTitle(from).build()
         c.prepare()
         c.play()
     }
+
+    /** Plays [seed] at once; the service then queues songs like it behind it, and drops them if something else got started meanwhile. */
+    fun playRadio(seed: Song, from: String = "${seed.title} Radio") = play(listOf(seed), from = from, radio = true)
+
+    /** Highest index first, so the rest keep theirs while going. */
+    fun remove(items: List<Queued>) = items.map { it.index }.sortedDescending().forEach(c::removeMediaItem)
+
+    fun queue() = (0 until c.mediaItemCount).mapNotNull { c.getMediaItemAt(it).song }
 
     fun playNext(songs: List<Song>) {
         if (c.mediaItemCount == 0) play(songs) else c.addMediaItems(c.currentMediaItemIndex + 1, songs.map(Song::toMediaItem))
@@ -245,10 +265,8 @@ fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
             item("seek") { Seek(p, song, pos) }
             item("controls") { Controls(p) }
             lyrics.data?.let { l -> item("lyrics") { LyricsCard(p, l, pos, color) } }
-            if (p.upNext.isNotEmpty()) item("next") {
-                Text("Up next", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 24.dp, top = 28.dp, bottom = 8.dp))
-            }
-            itemsIndexed(p.upNext, key = { _, (i, s) -> "$i:${s.id}" }) { _, (i, s) -> QueueRow(p, i, s, Modifier.animateItem(), start = 24.dp) }
+            if (p.upNext.isNotEmpty()) item("next") { QueueHeader(p, Modifier.padding(start = 24.dp, top = 28.dp, end = 8.dp), MaterialTheme.typography.titleLarge) }
+            queue(p, start = 24.dp)
             item("bottom") {
                 Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
                 Spacer(Modifier.height(32.dp))
@@ -257,17 +275,47 @@ fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
     }
 }
 
+/** "Up next" and what can be done with the whole queue. */
 @Composable
-private fun QueueRow(p: PlayerState, i: Int, s: Song, modifier: Modifier, start: Dp, cover: Dp = 44.dp) = Row(
-    modifier.fillMaxWidth().clickable { p.c.seekTo(i, 0); p.c.play() }.padding(start = start, end = 8.dp, top = 6.dp, bottom = 6.dp),
-    verticalAlignment = Alignment.CenterVertically,
-) {
-    Cover(s.coverArt, 120, Modifier.size(cover))
-    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-        Text(s.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(s.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+private fun QueueHeader(p: PlayerState, modifier: Modifier, style: TextStyle) {
+    var open by remember { mutableStateOf(false) }
+    var saving by remember { mutableStateOf<List<Song>?>(null) }
+    saving?.let { NewPlaylist(it) { saving = null } }
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text("Up next", style = style, modifier = Modifier.weight(1f))
+        Box {
+            IconButton({ open = true }) { Icon(Icons.Rounded.MoreVert, "Queue options", tint = Sub) }
+            DropdownMenu(open, { open = false }, containerColor = Elevated) {
+                DropdownMenuItem({ Text("Clear queue") }, { open = false; p.remove(p.upNext) }, enabled = p.upNext.isNotEmpty())
+                DropdownMenuItem({ Text("Save queue as playlist") }, { open = false; saving = p.queue() })
+            }
+        }
     }
-    IconButton({ p.c.removeMediaItem(i) }) { Icon(Icons.Rounded.Close, "Remove", tint = Sub) }
+}
+
+/** The queue's rows, with a line above the first of each run of songs the app added by itself. */
+private fun LazyListScope.queue(p: PlayerState, start: Dp, cover: Dp = 44.dp) = itemsIndexed(p.upNext, key = { _, q -> "${q.index}:${q.song.id}" }) { n, q ->
+    Column(Modifier.animateItem()) {
+        if (q.auto != null && q.auto != p.upNext.getOrNull(n - 1)?.auto) Row(Modifier.fillMaxWidth().padding(start = start, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (q.auto.isEmpty()) "Autoplay" else "Autoplay · songs like ${q.auto}", style = MaterialTheme.typography.labelLarge, color = Sub,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+            )
+            TextButton({ p.remove(p.upNext.filter { it.auto != null }) }) { Text("Clear", color = Sub) }
+        }
+        val (i, s) = q
+        Row(
+            Modifier.fillMaxWidth().clickable { p.c.seekTo(i, 0); p.c.play() }.padding(start = start, end = 8.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Cover(s.coverArt, 120, Modifier.size(cover))
+            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                Text(s.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(s.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            IconButton({ p.c.removeMediaItem(i) }) { Icon(Icons.Rounded.Close, "Remove", tint = Sub) }
+        }
+    }
 }
 
 @Composable
@@ -431,8 +479,9 @@ fun DockedPlayer(p: PlayerState, modifier: Modifier = Modifier) {
         val l = lyrics.data
         when {
             showQueue -> LazyColumn(m.then(fade), contentPadding = PaddingValues(vertical = 8.dp)) {
+                item("next") { QueueHeader(p, Modifier.padding(start = 16.dp, end = 4.dp), MaterialTheme.typography.titleSmall) }
                 if (p.upNext.isEmpty()) item { Hint("Nothing queued") }
-                itemsIndexed(p.upNext, key = { _, (i, s) -> "$i:${s.id}" }) { _, (i, s) -> QueueRow(p, i, s, Modifier.animateItem(), start = 16.dp, cover = 40.dp) }
+                queue(p, start = 16.dp, cover = 40.dp)
             }
             bigCover -> BoxWithConstraints(m.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 val side = minOf(maxWidth, maxHeight) - 32.dp

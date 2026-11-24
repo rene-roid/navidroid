@@ -50,6 +50,7 @@ import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material3.AlertDialog
 import androidx.compose.foundation.text.KeyboardActions
@@ -342,7 +343,9 @@ fun SelectionBar(modifier: Modifier = Modifier) {
                 // Shrinks rather than cut off with large fonts and six actions.
                 BasicText(label, Modifier.padding(top = 2.dp), style.copy(color = Color.White), maxLines = 1, autoSize = TextAutoSize.StepBased(8.sp, style.fontSize))
             }
-            action("Play", Icons.Rounded.PlayArrow) { withSongs { player?.play(it, from = tiles.singleOrNull()?.title) } }
+            action("Play", Icons.Rounded.PlayArrow) {
+                withSongs { if (tiles.isEmpty() && it.size == 1) player?.playRadio(it[0]) else player?.play(it, from = tiles.singleOrNull()?.title) }
+            }
             action("Next", Icons.AutoMirrored.Rounded.PlaylistPlay) { withSongs { player?.playNext(it) } }
             action("Queue", Icons.AutoMirrored.Rounded.QueueMusic) { withSongs { player?.enqueue(it) } }
             action("Playlist", Icons.AutoMirrored.Rounded.PlaylistAdd) { withSongs { adding = it } }
@@ -587,6 +590,7 @@ fun SongMenu(song: Song, tint: Color = Sub) {
             item(if (liked) "Remove from Liked Songs" else "Add to Liked Songs", if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder) { Likes.toggle(song) }
             item("Play next", Icons.AutoMirrored.Rounded.PlaylistPlay) { player?.playNext(listOf(song)) }
             item("Add to queue", Icons.AutoMirrored.Rounded.QueueMusic) { player?.enqueue(listOf(song)) }
+            item("Start song radio", Icons.Rounded.Radio) { player?.playRadio(song) }
             item("Add to playlist", Icons.AutoMirrored.Rounded.PlaylistAdd) { pick = true }
             song.albumId?.let { id -> item("Go to album", Icons.Rounded.Album) { nav.go(Route.Open(Kind.Album, id)) } }
             if (song.artistId != null) item("Go to artist", Icons.Rounded.Person) { goToArtist(song) }
