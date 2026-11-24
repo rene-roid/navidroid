@@ -136,6 +136,27 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
+import xyz.yuuki.navidroid.Facet
+import xyz.yuuki.navidroid.FACETS
+import xyz.yuuki.navidroid.LibFilter
+import xyz.yuuki.navidroid.LibSort
+import xyz.yuuki.navidroid.LibType
+import xyz.yuuki.navidroid.creator
+import xyz.yuuki.navidroid.libType
+import xyz.yuuki.navidroid.libraryRows
+import xyz.yuuki.navidroid.visibleTypes
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.foundation.lazy.LazyItemScope
+import androidx.compose.foundation.lazy.grid.LazyGridScope
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.material3.Surface
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
+import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import xyz.yuuki.navidroid.App
 import xyz.yuuki.navidroid.Collection
 import xyz.yuuki.navidroid.Home
@@ -468,13 +489,17 @@ fun ListRow(title: String, subtitle: String, cover: @Composable () -> Unit, trai
 // ---- library --------------------------------------------------------------------------------
 
 /** [column]: the library as the side column of a landscape tablet, under the shell's Home and Search, instead of a page. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(column: Boolean = false) {
     val nav = LocalNav.current
-    // No type picked shows everything in one list; the heart and the download filters narrow whatever is shown.
-    var tab by rememberSaveable { mutableStateOf<String?>(null) }
-    var onlySaved by rememberSaveable { mutableStateOf(false) }
-    var onlyDownloaded by rememberSaveable { mutableStateOf(false) }
+    val prefs = App.it.prefs
+    // No type picked shows everything in one list; the facet chips narrow whatever is shown.
+    var filter by rememberSaveable(stateSaver = Saver({ it.encode() }, LibFilter::decode)) { mutableStateOf(LibFilter()) }
+    var sort by remember { mutableStateOf(LibSort.entries[prefs.librarySort.coerceIn(0, LibSort.entries.size - 1)]) }
+    var grid by remember { mutableStateOf(prefs.libraryGrid) }
+    var showMixes by remember { mutableStateOf(prefs.libraryMixes) }
+    var options by remember { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     fun hit(vararg text: String?) = query.isBlank() || text.any { it?.contains(query.trim(), ignoreCase = true) == true }
     val pins by offline.pins.collectAsStateWithLifecycle()
@@ -489,11 +514,11 @@ fun LibraryScreen(column: Boolean = false) {
     val starred = rememberLoad("starred") { api.starred() }
     val albums = remember { mutableStateListOf<xyz.yuuki.navidroid.Album>() }
     var albumsDone by remember { mutableStateOf(false) }
-    val list = rememberLazyListState()
+    val list = rememberLazyGridState()
 
     // Albums page in as you scroll, or all the way through while searching so every album can match.
-    LaunchedEffect(tab, onlySaved, onlyDownloaded) {
-        if (tab != "Albums" || onlySaved || onlyDownloaded) return@LaunchedEffect
+    LaunchedEffect(filter) {
+        if (filter.type != LibType.Albums || filter.facets.isNotEmpty()) return@LaunchedEffect
         snapshotFlow { if (!albumsDone && (query.isNotBlank() || (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= albums.size - 20)) albums.size else -1 }
             .filter { it >= 0 }
             .distinctUntilChanged()
@@ -568,30 +593,58 @@ fun LibraryScreen(column: Boolean = false) {
                     if (query.isNotEmpty()) IconButton({ query = "" }) { Icon(Icons.Rounded.Close, "Clear", Modifier.size(20.dp), tint = Sub) }
                 }
             }
-            val chipColors = FilterChipDefaults.filterChipColors(
-                containerColor = Tile, labelColor = Color.White, iconColor = Color.White,
-                selectedContainerColor = Accent, selectedLabelColor = OnAccent, selectedLeadingIconColor = OnAccent,
-            )
-            Row(Modifier.horizontalScroll(rememberScrollState()).padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    onlySaved, { onlySaved = !onlySaved },
-                    { Icon(if (onlySaved) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, "Only saved", Modifier.size(18.dp)) },
-                    shape = RoundedCornerShape(32.dp), border = null, colors = chipColors,
-                )
-                FilterChip(
-                    onlyDownloaded, { onlyDownloaded = !onlyDownloaded },
-                    { Icon(if (onlyDownloaded) Icons.Rounded.ArrowCircleDown else Icons.Outlined.ArrowCircleDown, "Only downloaded", Modifier.size(18.dp)) },
-                    shape = RoundedCornerShape(32.dp), border = null, colors = chipColors,
-                )
-                // Tapping the picked type again goes back to everything.
-                LIBRARY_TABS.forEach { (t, icon) ->
-                    FilterChip(
-                        tab == t, { tab = if (tab == t) null else t }, { Text(t, maxLines = 1, softWrap = false) },
-                        leadingIcon = { Icon(icon, null, Modifier.size(18.dp)) },
-                        shape = RoundedCornerShape(32.dp), border = null, colors = chipColors,
-                    )
+        }
+        val user = prefs.username.orEmpty()
+        val pinnedIds = pins.map { "${it.kind}:${it.id}" }.toSet()
+        fun pinned(t: Tile) = "${t.kind}:${t.id}" in pinnedIds
+        // Saved items first; the server list is refreshed on every visit, overrides cover the gap.
+        val savedAlbums = starred.data?.list("album").orEmpty().map(xyz.yuuki.navidroid.Album::from).filter { Likes.isLiked(it.id, true) }
+        val savedArtists = starred.data?.list("artist").orEmpty().map(xyz.yuuki.navidroid.Artist::from).filter { Likes.isLiked(it.id, true) }
+        val savedAlbumIds = savedAlbums.map { it.id }.toSet()
+        val savedArtistIds = savedArtists.map { it.id }.toSet()
+        fun saved(t: Tile) = when (t.kind) {
+            Kind.Playlist -> t.id in Likes.playlists
+            Kind.Album -> t.id in savedAlbumIds
+            Kind.Artist -> t.id in savedArtistIds
+            Kind.Liked -> true
+            Kind.Genre -> false
+            Kind.ArtistMix, Kind.ArtistRadio -> Likes.hasMix(t.kind, t.id)
+        }
+        // Every album and artist on the server only under their own type; everywhere else just the saved ones.
+        val rows = listOf(likedTile(null)) +
+            playlists.data.orEmpty().filter { it.id !in Hidden.playlists }.map { p -> p.tile().copy(subtitle = if (p.mix != null) "Mix • ${p.mix.by}" else "Playlist • ${p.owner}") } +
+            Likes.mixes.map { it.copy(subtitle = "Mix • ${it.mix?.by}") } +
+            (savedAlbums + if (filter.type == LibType.Albums) albums.filter { it.id !in savedAlbumIds } else emptyList()).map { it.tile().copy(subtitle = "Album • ${it.artist}") } +
+            (savedArtists + if (filter.type == LibType.Artists) artists.data.orEmpty().filter { it.id !in savedArtistIds } else emptyList()).map { it.tile() }
+        val keys = rows.map { "${it.kind}:${it.id}" }.toSet()
+        val all = rows + downloaded.filter { "${it.kind}:${it.id}" !in keys && Hidden.shows(it) }
+        val shown = libraryRows(all, filter, sort, user, showMixes, ::saved, ::pinned) { hit(it.title, creator(it, user)) }
+
+        val chipColors = @Composable { on: Boolean -> if (on) Accent to OnAccent else Tile to Color.White }
+        @Composable
+        fun LazyItemScope.chip(on: Boolean, label: String, onClick: () -> Unit, content: @Composable () -> Unit) = chipColors(on).let { (bg, fg) ->
+            Surface(onClick, Modifier.animateItem().height(32.dp), shape = RoundedCornerShape(16.dp), color = bg, contentColor = fg) {
+                Row(Modifier.padding(horizontal = 12.dp).semantics { contentDescription = label }, verticalAlignment = Alignment.CenterVertically) { content() }
+            }
+        }
+        Row(Modifier.padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            LazyRow(Modifier.weight(1f), contentPadding = PaddingValues(start = 16.dp, end = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (filter.active) item("clear") { chip(false, "Clear filters", { filter = LibFilter() }) { Icon(Icons.Rounded.Close, null, Modifier.size(18.dp)) } }
+                if (filter.type == null) items(visibleTypes(all), key = { it.name }) { t -> chip(false, t.name, { filter = filter.pick(t) }) { Text(t.name, maxLines = 1, softWrap = false) } }
+                else item(filter.type!!.name) { chip(true, filter.type!!.name, { filter = filter.pick(null) }) { Text(filter.type!!.name, maxLines = 1, softWrap = false) } }
+                items(FACETS.getValue(filter.type), key = { "f:${it.name}" }) { f ->
+                    val on = f in filter.facets
+                    chip(on, f.name, { filter = filter.toggle(f) }) {
+                        when (f) {
+                            Facet.ByYou -> Text("By you", maxLines = 1, softWrap = false)
+                            Facet.ByOthers -> Text("By others", maxLines = 1, softWrap = false)
+                            Facet.Saved -> Icon(if (on) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder, null, Modifier.size(18.dp))
+                            Facet.Downloaded -> Icon(if (on) Icons.Rounded.ArrowCircleDown else Icons.Outlined.ArrowCircleDown, null, Modifier.size(18.dp))
+                        }
+                    }
                 }
             }
+            IconButton({ options = true }) { Icon(Icons.Rounded.Tune, "View options") }
         }
         // Rows fade out under the filters instead of being cut off by a hard line, once there is something above to fade.
         val topFade = Modifier.graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawWithContent {
@@ -599,79 +652,82 @@ fun LibraryScreen(column: Boolean = false) {
             if (list.canScrollBackward) drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black), endY = 24.dp.toPx()), blendMode = BlendMode.DstIn)
         }
         // The gap under the filters is list padding, so rows scroll right up to the filters before fading.
-        LazyColumn(Modifier.fillMaxSize().then(topFade), state = list, contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp)) {
-            val pinnedIds = pins.map { "${it.kind}:${it.id}" }.toSet()
-            fun pinned(t: Tile) = "${t.kind}:${t.id}" in pinnedIds
-            // Saved items first; the server list is refreshed on every visit, overrides cover the gap.
-            val savedAlbums = starred.data?.list("album").orEmpty().map(xyz.yuuki.navidroid.Album::from).filter { Likes.isLiked(it.id, true) }
-            val savedArtists = starred.data?.list("artist").orEmpty().map(xyz.yuuki.navidroid.Artist::from).filter { Likes.isLiked(it.id, true) }
-            val savedAlbumIds = savedAlbums.map { it.id }.toSet()
-            val savedArtistIds = savedArtists.map { it.id }.toSet()
-            fun saved(t: Tile) = when (t.kind) {
-                Kind.Playlist -> t.id in Likes.playlists
-                Kind.Album -> t.id in savedAlbumIds
-                Kind.Artist -> t.id in savedArtistIds
-                Kind.Liked -> true
-                Kind.Genre -> false
-                Kind.ArtistMix, Kind.ArtistRadio -> Likes.hasMix(t.kind, t.id)
-            }
-            // Every album and artist on the server only under their own filter; everywhere else just the saved ones.
-            val rows = listOf(likedTile(null)) +
-                playlists.data.orEmpty().filter { it.id !in Hidden.playlists }.map { p -> p.tile().copy(subtitle = if (p.mix != null) "Mix • ${p.mix.by}" else "Playlist • ${p.owner}") } +
-                Likes.mixes.map { it.copy(subtitle = "Mix • ${it.mix?.by}") } +
-                (savedAlbums + if (tab == "Albums") albums.filter { it.id !in savedAlbumIds } else emptyList()).map { it.tile().copy(subtitle = "Album • ${it.artist}") } +
-                (savedArtists + if (tab == "Artists") artists.data.orEmpty().filter { it.id !in savedArtistIds } else emptyList()).map { it.tile() }
-            val keys = rows.map { "${it.kind}:${it.id}" }.toSet()
-            val shown = (rows + downloaded.filter { "${it.kind}:${it.id}" !in keys })
-                .filter { (tab == null || libraryType(it) == tab) && (!onlySaved || saved(it)) && (!onlyDownloaded || pinned(it)) && hit(it.title, it.subtitle) }
-                .sortedBy { !saved(it) }
-            @Composable
-            fun row(t: Tile) = ListRow(t.title, t.subtitle, { TileCover(t.kind, t.id, t.coverArt, t.mix, Modifier.size(56.dp), 120) }, {
+        LazyVerticalGrid(
+            if (grid) GridCells.Adaptive(110.dp) else GridCells.Fixed(1), Modifier.fillMaxSize().then(topFade), state = list,
+            contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(if (grid) 4.dp else 0.dp),
+        ) {
+            val marks = @Composable { t: Tile ->
                 if (saved(t) && t.kind != Kind.Liked) FavoriteMark()
                 if (pinned(t)) DownloadedMark()
-            }, t) { nav.open(t) }
-
-            val (liked, rest) = shown.partition { it.kind == Kind.Liked }
-            items(liked, key = { "${it.kind}:${it.id}" }) { row(it) }
-            if (tab == "Playlists" && !onlySaved && !onlyDownloaded && query.isBlank()) item("new") {
-                ListRow("Create playlist", "Then add songs from any song's menu", { Box(Modifier.size(56.dp).background(Tile, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, null) } }) { creating = true }
             }
-            if (tab == "Mixes") {
-                val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
-                MIX_SECTIONS.forEach { (section, title) ->
-                    val group = rest.filter { it.mix?.section == section }.sortedWith(compareBy({ !saved(it) }, { xyz.yuuki.navidroid.mixOrder(it.mix!!, hour) }))
-                    if (group.isNotEmpty()) item("section:$section") {
-                        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.W700, modifier = Modifier.padding(top = 16.dp, bottom = 4.dp))
-                    }
-                    items(group, key = { "${it.kind}:${it.id}" }) { row(it) }
+            @Composable
+            fun cell(t: Tile) = if (!grid) ListRow(t.title, t.subtitle, { TileCover(t.kind, t.id, t.coverArt, t.mix, Modifier.size(56.dp), 120) }, { marks(t) }, t) { nav.open(t) }
+            else Column(Modifier.clip(RoundedCornerShape(6.dp)).pickable(t) { nav.open(t) }.padding(6.dp)) {
+                TileCover(t.kind, t.id, t.coverArt, t.mix, Modifier.fillMaxWidth())
+                Spacer(Modifier.height(6.dp))
+                Text(t.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    marks(t)
+                    Text(t.subtitle, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-            } else items(rest, key = { "${it.kind}:${it.id}" }) { row(it) }
-            if (shown.isEmpty() && (onlySaved || onlyDownloaded)) item("none") {
+            }
+            fun LazyGridScope.header(key: String, title: String) = item(key, span = { GridItemSpan(maxLineSpan) }) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.W700, modifier = Modifier.padding(top = 16.dp, bottom = 4.dp))
+            }
+            fun LazyGridScope.group(ts: List<Tile>) = items(ts, key = { "${it.kind}:${it.id}" }) { cell(it) }
+
+            val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+            val sections = when (filter.type) {
+                LibType.Radios -> listOf<Pair<String, (Tile) -> Boolean>>("Artist radios" to { it.mix?.kind != "genreradio" }, "Genre radios" to { it.mix?.kind == "genreradio" })
+                LibType.Mixes -> MIX_SECTIONS.map { (s, title) -> title to { t: Tile -> t.mix?.section == s } }
+                else -> null
+            }
+            if (sections != null) {
+                sections.forEach { (title, pick) ->
+                    val g = shown.filter(pick).let { if (sort == LibSort.Default) it.sortedWith(compareBy({ !saved(it) }, { xyz.yuuki.navidroid.mixOrder(it.mix!!, hour) })) else it }
+                    if (g.isNotEmpty()) header("section:$title", title)
+                    group(g)
+                }
+            } else {
+                val (generated, own) = shown.partition { libType(it) == LibType.Radios || libType(it) == LibType.Mixes }
+                if (filter.type == LibType.Playlists && filter.facets.isEmpty() && query.isBlank()) item("new", span = { GridItemSpan(maxLineSpan) }) {
+                    ListRow("Create playlist", "Then add songs from any song's menu", { Box(Modifier.size(56.dp).background(Tile, RoundedCornerShape(4.dp)), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, null) } }) { creating = true }
+                }
+                group(own)
+                if (generated.isNotEmpty()) header("section:generated", "Mixes & radios")
+                group(generated)
+            }
+            if (shown.isEmpty() && filter.facets.isNotEmpty()) item("none", span = { GridItemSpan(maxLineSpan) }) {
                 Text(
-                    if (onlyDownloaded) "Nothing downloaded here yet. Tap the download button on a playlist or album to keep it on this phone."
-                    else "Nothing saved here yet. Tap the heart on a playlist, album or artist.",
+                    if (Facet.Downloaded in filter.facets) "Nothing downloaded here yet. Tap the download button on a playlist or album to keep it on this phone."
+                    else "Nothing here yet. Tap the heart on a playlist, album or artist.",
                     style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 24.dp),
                 )
             }
-            item("end") { if (column) Spacer(Modifier.height(8.dp)) else BottomSpacer() }
+            item("end", span = { GridItemSpan(maxLineSpan) }) { if (column) Spacer(Modifier.height(8.dp)) else BottomSpacer() }
         }
     }
-}
-
-private val LIBRARY_TABS = listOf(
-    "Playlists" to Icons.AutoMirrored.Rounded.QueueMusic,
-    "Mixes" to Icons.Rounded.AutoAwesome,
-    "Albums" to Icons.Rounded.Album,
-    "Artists" to Icons.Rounded.Person,
-)
-
-/** Which type filter a library row is under; downloaded genres only show with none picked. */
-private fun libraryType(t: Tile) = when {
-    t.kind == Kind.Liked || t.kind == Kind.Playlist && t.mix == null -> "Playlists"
-    t.mix != null -> "Mixes"
-    t.kind == Kind.Album -> "Albums"
-    t.kind == Kind.Artist -> "Artists"
-    else -> null
+    if (options) ModalBottomSheet({ options = false }, containerColor = Tile) {
+        Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp).navigationBarsPadding()) {
+            @Composable
+            fun choice(title: String, on: Boolean, pick: () -> Unit) = Row(Modifier.fillMaxWidth().clickable(onClick = pick), verticalAlignment = Alignment.CenterVertically) {
+                RadioButton(on, pick)
+                Text(title, style = MaterialTheme.typography.bodyLarge)
+            }
+            Text("Sort by", style = MaterialTheme.typography.titleMedium)
+            listOf(LibSort.Default to "Saved first", LibSort.Alphabetical to "Alphabetical", LibSort.Creator to "Creator").forEach { (s, title) ->
+                choice(title, sort == s) { sort = s; prefs.librarySort = s.ordinal }
+            }
+            Text("Layout", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 16.dp))
+            choice("List", !grid) { grid = false; prefs.libraryGrid = false }
+            choice("Grid", grid) { grid = true; prefs.libraryGrid = true }
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Show mixes & radios in Your Library", Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                Switch(showMixes, { showMixes = it; prefs.libraryMixes = it })
+            }
+        }
+    }
 }
 
 /** Mix sections, in the same order and wording as the home screen. */
