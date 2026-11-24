@@ -35,6 +35,7 @@ android {
             signingConfig = signingConfigs.getByName("debug")
             optimization {
                 enable = true
+                keepRules { files.add(file("keep-rules.pro")) }
             }
         }
     }
