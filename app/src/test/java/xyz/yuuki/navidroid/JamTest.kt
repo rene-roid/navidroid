@@ -106,3 +106,13 @@ class JamTest {
         assertEquals(JamSettings(), JamSettings.from(JSONObject()))
     }
 }
+
+class CgnatTest {
+    private fun ip(vararg b: Int) = ByteArray(b.size) { b[it].toByte() }
+
+    @org.junit.Test
+    fun tailnetAddressesMayJoin() = org.junit.Assert.assertEquals(
+        listOf(true, true, false, false, false),
+        listOf(ip(100, 64, 0, 1), ip(100, 127, 255, 254), ip(100, 128, 0, 1), ip(100, 63, 0, 1), ip(8, 8, 8, 8)).map(::isCgnat),
+    )
+}

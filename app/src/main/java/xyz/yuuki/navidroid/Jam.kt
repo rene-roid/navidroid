@@ -184,6 +184,9 @@ fun readHead(input: InputStream, max: Int = 8192): String? {
 
 class Reply(val code: Int, val body: ByteArray, val type: String = "application/json")
 
+/** 100.64.0.0/10, the shared range Tailscale and other overlay VPNs hand out, so friends on your tailnet can join. */
+fun isCgnat(a: ByteArray) = a.size == 4 && a[0] == 100.toByte() && (a[1].toInt() and 0xC0) == 64
+
 private fun ok(o: JSONObject = JSONObject()) = Reply(200, o.toString().toByteArray())
 private fun err(code: Int, message: String) = Reply(code, JSONObject().put("error", message).toString().toByteArray())
 
@@ -283,7 +286,7 @@ object Jam {
         c.use {
             c.soTimeout = 5_000
             // The Jam is for the people in the room: nothing from beyond the local network gets an answer.
-            if (!c.inetAddress.run { isSiteLocalAddress || isLoopbackAddress || isLinkLocalAddress }) return@use
+            if (!c.inetAddress.run { isSiteLocalAddress || isLoopbackAddress || isLinkLocalAddress || isCgnat(address) }) return@use
             val req = readHead(c.getInputStream().buffered())?.let(::parseRequest)
             val r = if (req == null) err(400, "Bad request") else runCatching { handle(req) }.getOrElse { err(500, "Something went wrong") }
             c.getOutputStream().run {
