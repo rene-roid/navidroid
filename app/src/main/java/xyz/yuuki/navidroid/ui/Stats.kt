@@ -52,7 +52,7 @@ private fun StatCard(i: Int, modifier: Modifier = Modifier, content: @Composable
 @Composable
 private fun Big(value: String, label: String, modifier: Modifier = Modifier) = Column(modifier) {
     Text(label.uppercase(), style = MaterialTheme.typography.labelMedium, letterSpacing = 1.sp, color = Color.White.copy(alpha = .8f))
-    Text(value, fontSize = 40.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    Text(value, autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(18.sp, 40.sp), fontWeight = FontWeight.ExtraBold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
 }
 
 @Composable
