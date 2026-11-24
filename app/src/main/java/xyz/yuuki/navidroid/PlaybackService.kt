@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.view.KeyEvent
+import androidx.compose.runtime.snapshotFlow
 import androidx.core.content.IntentCompat
 import android.os.Bundle
 import android.os.Handler
@@ -30,8 +31,17 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.ShuffleOrder.DefaultShuffleOrder
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.session.CacheBitmapLoader
+import androidx.media3.session.CommandButton
+import androidx.media3.session.LibraryResult
+import androidx.media3.session.MediaConstants
+import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.MediaLibraryService.LibraryParams
+import androidx.media3.session.MediaLibraryService.MediaLibrarySession
 import androidx.media3.session.MediaSession
-import androidx.media3.session.MediaSessionService
+import androidx.media3.session.MediaSession.MediaItemsWithStartPosition
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionError
+import androidx.media3.session.SessionResult
 import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
@@ -46,13 +56,17 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import xyz.yuuki.navidroid.ui.Likes
 import xyz.yuuki.navidroid.ui.coverRequest
 import java.io.IOException
+import kotlin.random.Random
 
 /** [auto]: the song this one was picked to follow, when the app queued it (radio, autoplay) and not the user. [jam]: the Jam guest who added it. */
 fun Song.toMediaItem(auto: String? = null, jam: String? = null): MediaItem {
@@ -84,8 +98,71 @@ val MediaItem.song: Song? get() = mediaMetadata.extras?.getString("song")?.let {
 val MediaItem.auto: String? get() = mediaMetadata.extras?.getString("auto")
 val MediaItem.jam: String? get() = mediaMetadata.extras?.getString("jam")
 
-class PlaybackService : MediaSessionService() {
-    private var session: MediaSession? = null
+/** When the music stops by itself. [at]: the SystemClock.elapsedRealtime to stop at, or null to stop when the current song ends. */
+data class SleepTimer(val at: Long?)
+
+/** What the screens set and the playback service acts on, so it goes on without them. */
+object Playback {
+    val sleep = MutableStateFlow<SleepTimer?>(null)
+    val gain by lazy { MutableStateFlow(GainMode.entries.getOrElse(App.it.prefs.replayGain) { GainMode.Off }) }
+
+    /** Likes or unlikes the current song; what the heart in the notification and in the car sends. */
+    val LIKE = SessionCommand("like", Bundle.EMPTY)
+
+    /** Drags the song at timeline index "from" to where the one at "to" plays, and marks it "auto". */
+    val MOVE = SessionCommand("move", Bundle.EMPTY)
+
+    fun setGain(mode: GainMode) {
+        gain.value = mode
+        App.it.prefs.replayGain = mode.ordinal
+    }
+}
+
+const val SLEEP_FADE_MS = 10_000L
+
+/** How loud to play with [leftMs] to go before a sleep timer stops the music: it fades out over the last ten seconds. */
+fun sleepFade(leftMs: Long) = (leftMs.toFloat() / SLEEP_FADE_MS).coerceIn(0f, 1f)
+
+/** This list after its item at [from] is dragged to [to]. */
+fun <T> List<T>.moved(from: Int, to: Int): List<T> = toMutableList().apply { add(to, removeAt(from)) }
+
+/**
+ * An order to play songs by [artists] in, as indices into it: shuffled, but with no artist twice in a row wherever
+ * the songs allow it, and not opening with the artist that plays just before ([after]).
+ */
+fun smartShuffle(artists: List<String>, rnd: Random = Random, after: String? = null): List<Int> {
+    val pool = artists.indices.shuffled(rnd).toMutableList()
+    val left = artists.groupingBy { it }.eachCount().toMutableMap()
+    var last = after
+    return List(artists.size) {
+        // An artist with more than half of what's left has to go now, or two of theirs end up together later.
+        val must = left.entries.firstOrNull { it.value * 2 > pool.size && it.key != last }?.key
+        val at = (if (must != null) pool.indexOfFirst { artists[it] == must } else pool.indexOfFirst { artists[it] != last }).coerceAtLeast(0)
+        pool.removeAt(at).also { i ->
+            last = artists[i]
+            left[artists[i]] = left.getValue(artists[i]) - 1
+        }
+    }
+}
+
+/** Timeline indices in the order they play, which shuffle makes its own. */
+fun Player.playOrder(): List<Int> {
+    val t = currentTimeline
+    return generateSequence(t.getFirstWindowIndex(shuffleModeEnabled).takeIf { it != C.INDEX_UNSET }) { i ->
+        t.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, shuffleModeEnabled).takeIf { it != C.INDEX_UNSET }
+    }.toList()
+}
+
+private fun <T> CoroutineScope.future(block: suspend () -> T): ListenableFuture<T> =
+    SettableFuture.create<T>().also { f -> launch { runCatching { block() }.fold(f::set, f::setException) } }
+
+class PlaybackService : MediaLibraryService() {
+    private var session: MediaLibrarySession? = null
+    private lateinit var player: ExoPlayer
+    /** The two things that turn the player down: the current song's ReplayGain and a sleep timer running out. */
+    private var loudness: ReplayGain? = null
+    private var fade = 1f
+    private var liked: Boolean? = null
     private val scope = MainScope()
     private val queueFile by lazy { App.it.dir("queue.json") }
     private val buttons = Handler(Looper.getMainLooper())
@@ -102,7 +179,7 @@ class PlaybackService : MediaSessionService() {
                     .setEnableAudioOutputPlaybackParameters(enableAudioTrackPlaybackParams)
                     .setAudioProcessors(arrayOf(TeeAudioProcessor(Levels))).build()
         }
-        val player = ExoPlayer.Builder(this, renderers)
+        player = ExoPlayer.Builder(this, renderers)
             // Transcoded streams have no length; seek them by bitrate instead.
             .setMediaSourceFactory(DefaultMediaSourceFactory(app.offline.playback, DefaultExtractorsFactory().setConstantBitrateSeekingAlwaysEnabled(true)))
             // Start after half a second of audio instead of 2.5 s; songs are cached or preloaded most of the time.
@@ -120,6 +197,19 @@ class PlaybackService : MediaSessionService() {
             override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
                 retries = 0
                 saveQueue(player)
+                loudness = item?.song?.gain
+                setVolume()
+                showLike()
+                // A queue that starts out shuffled got its order from the player; the shuffle button comes by below.
+                if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED && player.shuffleModeEnabled) shuffleSmartly()
+            }
+
+            override fun onShuffleModeEnabledChanged(on: Boolean) {
+                if (on) shuffleSmartly()
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) Playback.sleep.value = null
             }
 
             override fun onEvents(p: Player, events: Player.Events) {
@@ -147,15 +237,96 @@ class PlaybackService : MediaSessionService() {
             app.api.online.collect { if (it && player.playerError != null) player.prepare() }
         }
 
-        session = MediaSession.Builder(this, player)
-            .setBitmapLoader(CacheBitmapLoader(CoverLoader(app)))
-            .setSessionActivity(
-                PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE),
-            )
-            .setCallback(object : MediaSession.Callback {
-                // Controllers don't send URIs across the binder; every song's URI derives from its id.
-                override fun onAddMediaItems(session: MediaSession, controller: MediaSession.ControllerInfo, items: MutableList<MediaItem>) =
-                    Futures.immediateFuture(items.map { it.buildUpon().setUri(songUri(it.mediaId)).setCustomCacheKey(it.mediaId).build() })
+        scope.launch { Playback.sleep.collectLatest(::sleep) }
+        scope.launch { Playback.gain.collect { setVolume() } }
+        // The heart follows likes made in the app too.
+        scope.launch { snapshotFlow { player.currentMediaItem?.song?.let(Likes::isLiked) }.collect { showLike() } }
+
+        session = MediaLibrarySession.Builder(
+            this, player,
+            object : MediaLibrarySession.Callback {
+                override fun onConnect(session: MediaSession, controller: MediaSession.ControllerInfo) =
+                    MediaSession.ConnectionResult.AcceptedResultBuilder(session, controller).setAvailableSessionCommands(
+                        MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS.buildUpon().add(Playback.LIKE).add(Playback.MOVE).build(),
+                    ).build()
+
+                override fun onCustomCommand(session: MediaSession, controller: MediaSession.ControllerInfo, command: SessionCommand, args: Bundle): ListenableFuture<SessionResult> {
+                    when (command) {
+                        Playback.LIKE -> player.currentMediaItem?.song?.let {
+                            Likes.toggle(it)
+                            showLike()
+                        }
+                        Playback.MOVE -> move(args.getInt("from"), args.getInt("to"), args.getString("auto"))
+                    }
+                    return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+                }
+
+                // The app's own songs arrive whole but for their URI, which controllers don't send across the binder and
+                // derives from the id. A browser sends only the id of a place in the tree, or what someone said to play.
+                override fun onAddMediaItems(session: MediaSession, controller: MediaSession.ControllerInfo, items: MutableList<MediaItem>): ListenableFuture<List<MediaItem>> {
+                    fun own(it: MediaItem) = it.buildUpon().setUri(songUri(it.mediaId)).setCustomCacheKey(it.mediaId).build()
+                    fun asked(it: MediaItem) = Node.parse(it.mediaId) != null || it.requestMetadata.searchQuery != null
+                    if (items.none(::asked)) return Futures.immediateFuture(items.map(::own))
+                    return scope.future {
+                        items.flatMap { item ->
+                            val track = Node.parse(item.mediaId) as? Node.Track
+                            when {
+                                track != null -> listOf(item.song ?: app.api.song(track.songId))
+                                asked(item) -> browsePlay(app, item)?.songs.orEmpty()
+                                else -> return@flatMap listOf(own(item))
+                            }.map { it.toMediaItem() }
+                        }
+                    }
+                }
+
+                override fun onSetMediaItems(
+                    session: MediaSession, controller: MediaSession.ControllerInfo, items: MutableList<MediaItem>, startIndex: Int, startPositionMs: Long,
+                ): ListenableFuture<MediaItemsWithStartPosition> {
+                    val one = items.singleOrNull()?.takeIf { Node.parse(it.mediaId) != null || it.requestMetadata.searchQuery != null }
+                        ?: return super.onSetMediaItems(session, controller, items, startIndex, startPositionMs)
+                    return scope.future {
+                        val asked = browsePlay(app, one)?.takeIf { it.songs.isNotEmpty() } ?: throw IOException("Nothing to play for ${one.mediaId}")
+                        player.playlistMetadata = MediaMetadata.Builder().setTitle(asked.from).build()
+                        MediaItemsWithStartPosition(asked.songs.map { it.toMediaItem() }, asked.start, 0)
+                    }
+                }
+
+                override fun onGetLibraryRoot(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, params: LibraryParams?) =
+                    Futures.immediateFuture(
+                        LibraryResult.ofItem(
+                            browseRoot(),
+                            // A car shows playlists and albums as a grid of covers, songs as a list.
+                            LibraryParams.Builder().setExtras(
+                                Bundle().apply {
+                                    putInt(MediaConstants.EXTRAS_KEY_CONTENT_STYLE_BROWSABLE, MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_GRID_ITEM)
+                                    putInt(MediaConstants.EXTRAS_KEY_CONTENT_STYLE_PLAYABLE, MediaConstants.EXTRAS_VALUE_CONTENT_STYLE_LIST_ITEM)
+                                },
+                            ).build(),
+                        ),
+                    )
+
+                override fun onGetItem(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, mediaId: String) =
+                    scope.future { runCatching { browseItem(app, mediaId) }.getOrNull()?.let { LibraryResult.ofItem(it, null) } ?: LibraryResult.ofError(SessionError.ERROR_BAD_VALUE) }
+
+                override fun onGetChildren(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, parentId: String, page: Int, pageSize: Int, params: LibraryParams?) =
+                    scope.future {
+                        runCatching { browseChildren(app, parentId) }.fold(
+                            { if (it == null) LibraryResult.ofError(SessionError.ERROR_BAD_VALUE) else LibraryResult.ofItemList(it.page(page, pageSize), params) },
+                            { LibraryResult.ofError(SessionError.ERROR_IO) },
+                        )
+                    }
+
+                override fun onSearch(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, query: String, params: LibraryParams?): ListenableFuture<LibraryResult<Void>> {
+                    scope.launch {
+                        val found = runCatching { browseSearch(app, query) }.getOrDefault(emptyList())
+                        searches[query] = found
+                        session.notifySearchResultChanged(browser, query, found.size, params)
+                    }
+                    return Futures.immediateFuture(LibraryResult.ofVoid())
+                }
+
+                override fun onGetSearchResult(session: MediaLibrarySession, browser: MediaSession.ControllerInfo, query: String, page: Int, pageSize: Int, params: LibraryParams?) =
+                    scope.future { LibraryResult.ofItemList((searches[query] ?: runCatching { browseSearch(app, query) }.getOrDefault(emptyList())).page(page, pageSize), params) }
 
                 // Headset button: one press toggles, two skip to the next song, three go back.
                 override fun onMediaButtonEvent(session: MediaSession, controller: MediaSession.ControllerInfo, intent: Intent): Boolean {
@@ -176,7 +347,12 @@ class PlaybackService : MediaSessionService() {
                     }
                     return true
                 }
-            })
+            },
+        )
+            .setBitmapLoader(CacheBitmapLoader(CoverLoader(app)))
+            .setSessionActivity(
+                PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE),
+            )
             .build()
 
         Jam.player = player
@@ -191,6 +367,75 @@ class PlaybackService : MediaSessionService() {
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = session
 
+    /** What a browser last searched for, kept for when it comes back for the hits. */
+    private val searches = object : LinkedHashMap<String, List<MediaItem>>() {
+        override fun removeEldestEntry(eldest: Map.Entry<String, List<MediaItem>>) = size > 8
+    }
+
+    private fun setVolume() {
+        player.volume = replayVolume(loudness, Playback.gain.value) * fade
+    }
+
+    /** Runs [t] until it stops the music or another takes its place; whichever way it ends, the volume comes back. */
+    private suspend fun sleep(t: SleepTimer?) {
+        if (t == null) return
+        // The player stops itself at the end of the song, exactly where the next one would start.
+        player.pauseAtEndOfMediaItems = t.at == null
+        try {
+            while (player.playbackState != Player.STATE_ENDED) {
+                val left = t.at?.let { it - SystemClock.elapsedRealtime() }
+                    ?: (player.duration.takeIf { it != C.TIME_UNSET } ?: player.mediaMetadata.durationMs)?.let { ((it - player.currentPosition) / player.playbackParameters.speed).toLong() }
+                    ?: Long.MAX_VALUE
+                if (t.at != null && left <= 0) {
+                    player.pause()
+                    break
+                }
+                fade = sleepFade(left)
+                setVolume()
+                delay(if (left > SLEEP_FADE_MS + 1_000) 1_000 else 50)
+            }
+            Playback.sleep.value = null
+        } finally {
+            player.pauseAtEndOfMediaItems = false
+            fade = 1f
+            setVolume()
+        }
+    }
+
+    private fun showLike() {
+        val on = player.currentMediaItem?.song?.let(Likes::isLiked)
+        if (on == liked) return
+        liked = on
+        session?.setMediaButtonPreferences(
+            if (on == null) emptyList() else listOf(
+                CommandButton.Builder(if (on) CommandButton.ICON_HEART_FILLED else CommandButton.ICON_HEART_UNFILLED)
+                    .setDisplayName(if (on) "Remove from Liked Songs" else "Add to Liked Songs").setSessionCommand(Playback.LIKE).build(),
+            ),
+        )
+    }
+
+    /** The current song first, then the rest of the user's with their artists spread out, then what autoplay added, as it was. */
+    private fun shuffleSmartly() {
+        val now = player.currentMediaItemIndex
+        val items = List(player.mediaItemCount, player::getMediaItemAt)
+        if (now !in items.indices) return
+        fun artist(i: Int) = items[i].mediaMetadata.artist?.toString().orEmpty()
+        val (autos, own) = items.indices.filter { it != now }.partition { items[it].auto != null }
+        val order = listOf(now) + smartShuffle(own.map(::artist), after = artist(now)).map { own[it] } + autos
+        player.setShuffleOrder(DefaultShuffleOrder(order.toIntArray(), System.nanoTime()))
+    }
+
+    private fun move(from: Int, to: Int, auto: String?) {
+        val n = player.mediaItemCount
+        if (from !in 0 until n || to !in 0 until n || from == to) return
+        val order = player.playOrder()
+        val item = player.getMediaItemAt(from)
+        if (item.auto != auto) item.song?.let { player.replaceMediaItem(from, it.toMediaItem(auto, item.jam)) }
+        // A shuffled queue plays in an order of its own: the song keeps its place in the list and moves in that order.
+        if (player.shuffleModeEnabled) player.setShuffleOrder(DefaultShuffleOrder(order.moved(order.indexOf(from), order.indexOf(to)).toIntArray(), System.nanoTime()))
+        else player.moveMediaItem(from, to)
+    }
+
     // A widget button can be what starts the process, and would then get here ahead of the saved queue.
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         scope.launch {
@@ -203,6 +448,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         buttons.removeCallbacksAndMessages(null)
+        Playback.sleep.value = null
         Jam.stop()
         Jam.player = null
         session?.run {
