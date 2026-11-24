@@ -2,21 +2,35 @@ package xyz.yuuki.navidroid.ui
 
 import xyz.yuuki.navidroid.Kind
 
-// Spelled out: class names don't survive R8, and this gets stored.
-private val simple = mapOf(
-    "Home" to Route.Home, "Search" to Route.Search, "Library" to Route.Library, "Settings" to Route.Settings, "Downloads" to Route.Downloads,
-    "Appearance" to Route.Appearance, "HiddenPlaylists" to Route.HiddenPlaylists, "SongCache" to Route.SongCache, "ImageCache" to Route.ImageCache,
-    "SavedInfo" to Route.SavedInfo, "Playback" to Route.Playback, "DownloadSettings" to Route.DownloadSettings, "Server" to Route.Server,
-    "Storage" to Route.Storage, "About" to Route.About,
-)
-
-/** A route as one string, so the back stack survives process death: "Home", "Open:Playlist:42", "More:top-mixes". */
+/**
+ * A route as one string, so the back stack survives process death: "Home", "Open:Playlist:42", "More:top-mixes".
+ * Spelled out because class names don't survive R8, and exhaustive so a new Route can't be added without a name here.
+ */
 fun Route.encode(): String = when (this) {
     is Route.Open -> "Open:${kind.name}:$id"
     is Route.More -> "More:$section"
     is Route.Jam -> "Jam:$base"
-    else -> simple.entries.first { it.value == this }.key
+    Route.Home -> "Home"
+    Route.Search -> "Search"
+    Route.Library -> "Library"
+    Route.Settings -> "Settings"
+    Route.Downloads -> "Downloads"
+    Route.Appearance -> "Appearance"
+    Route.HiddenPlaylists -> "HiddenPlaylists"
+    Route.SongCache -> "SongCache"
+    Route.ImageCache -> "ImageCache"
+    Route.SavedInfo -> "SavedInfo"
+    Route.Playback -> "Playback"
+    Route.DownloadSettings -> "DownloadSettings"
+    Route.Server -> "Server"
+    Route.Storage -> "Storage"
+    Route.About -> "About"
 }
+
+private val simple = listOf(
+    Route.Home, Route.Search, Route.Library, Route.Settings, Route.Downloads, Route.Appearance, Route.HiddenPlaylists, Route.SongCache,
+    Route.ImageCache, Route.SavedInfo, Route.Playback, Route.DownloadSettings, Route.Server, Route.Storage, Route.About,
+).associateBy { it.encode() }
 
 /** Null for anything [encode] doesn't produce, such as a route a newer or older build had. */
 fun decodeRoute(s: String): Route? {
