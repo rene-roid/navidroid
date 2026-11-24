@@ -8,6 +8,7 @@ media3 = "1.11.1"
 navigation3 = "1.1.7"
 coil = "3.6.3"
 palette = "1.0.0"
+glance = "1.2.0"
 junit = "4.13.2"
 
 [libraries]
@@ -24,6 +25,7 @@ navigation3-ui = { group = "androidx.navigation3", name = "navigation3-ui", vers
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
 coil-okhttp = { group = "io.coil-kt.coil3", name = "coil-network-okhttp", version.ref = "coil" }
 palette = { group = "androidx.palette", name = "palette-ktx", version.ref = "palette" }
+glance-appwidget = { group = "androidx.glance", name = "glance-appwidget", version.ref = "glance" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 json = { group = "org.json", name = "json", version = "20250517" }
 

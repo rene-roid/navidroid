@@ -63,6 +63,7 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.coil.okhttp)
     implementation(libs.palette)
+    implementation(libs.glance.appwidget)
     testImplementation(libs.junit)
     // Android's org.json is a stub in local unit tests; the real one runs the parsers.
     testImplementation(libs.json)

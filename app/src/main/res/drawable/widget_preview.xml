@@ -1,0 +1,11 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape>
+            <size android:width="250dp" android:height="110dp" />
+            <solid android:color="@color/icon_bg" />
+            <corners android:radius="24dp" />
+        </shape>
+    </item>
+    <item android:drawable="@drawable/icon_aurora" android:width="86dp" android:height="86dp" android:gravity="center_vertical|start" android:start="12dp" />
+    <item android:drawable="@drawable/media3_icon_play" android:width="40dp" android:height="40dp" android:gravity="center_vertical|end" android:end="24dp" />
+</layer-list>
