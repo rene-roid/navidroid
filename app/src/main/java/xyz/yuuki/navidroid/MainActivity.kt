@@ -2,6 +2,7 @@ package xyz.yuuki.navidroid
 
 import android.Manifest
 import android.content.ComponentName
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color as AndroidColor
 import android.os.Build
@@ -88,6 +89,7 @@ import xyz.yuuki.navidroid.ui.DockedPlayer
 import xyz.yuuki.navidroid.ui.DownloadsScreen
 import xyz.yuuki.navidroid.ui.HomeTint
 import xyz.yuuki.navidroid.ui.HomeScreen
+import xyz.yuuki.navidroid.ui.JamScreen
 import xyz.yuuki.navidroid.ui.LibraryScreen
 import xyz.yuuki.navidroid.ui.LocalNav
 import xyz.yuuki.navidroid.ui.LocalPlayer
@@ -128,12 +130,15 @@ class MainActivity : ComponentActivity() {
     private var future: ListenableFuture<MediaController>? = null
     private var player by mutableStateOf<PlayerState?>(null)
     private var loggedIn by mutableStateOf(false)
+    /** A Jam link the app was opened with, until the shell has gone there. */
+    private var jamLink by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(SystemBarStyle.dark(AndroidColor.TRANSPARENT), SystemBarStyle.dark(AndroidColor.TRANSPARENT))
         migrateIcon(this)
         loggedIn = App.it.prefs.loggedIn
+        if (savedInstanceState == null) jamLink = intent?.dataString?.let(::jamBase)
         if (loggedIn) connect()
         // The widgets still show the account the last process ran as.
         if (intent.getBooleanExtra(EXTRA_SWITCHED, false)) App.it.scope.launch { NowPlayingWidget().updateAll(App.it) }
@@ -147,10 +152,15 @@ class MainActivity : ComponentActivity() {
                     connect()
                     App.it.offline.sync()
                 } else CompositionLocalProvider(LocalPlayer provides player) {
-                    Shell(::logout)
+                    Shell(::logout, jamLink) { jamLink = null }
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        intent.dataString?.let(::jamBase)?.let { jamLink = it }
     }
 
     override fun onStart() {
@@ -196,7 +206,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun Shell(onLogout: () -> Unit) {
+private fun Shell(onLogout: () -> Unit, jamLink: String?, onJamOpened: () -> Unit) {
     val nav = remember { Nav() }
     val player = LocalPlayer.current
     var nowPlaying by rememberSaveable { mutableStateOf(false) }
@@ -208,6 +218,13 @@ private fun Shell(onLogout: () -> Unit) {
     // A tablet in landscape has the width for the library as a column beside the page, in place of the rail.
     val column = wide && !bar && tablet
     val docked = wide && !bar && player?.song != null
+
+    LaunchedEffect(jamLink) {
+        if (jamLink == null) return@LaunchedEffect
+        nowPlaying = false
+        if (nav.stack.last() != Route.Jam(jamLink)) nav.go(Route.Jam(jamLink))
+        onJamOpened()
+    }
 
     CompositionLocalProvider(LocalNav provides nav) {
         // The rail, the page and the player card share one sky tinted by the page, so it runs edge to edge.
@@ -272,6 +289,7 @@ private fun Shell(onLogout: () -> Unit) {
                                     Route.Storage -> StorageScreen()
                                     Route.About -> AboutScreen()
                                     is Route.More -> MoreScreen(r.section)
+                                    is Route.Jam -> JamScreen(r.base)
                                     is Route.Open -> if (r.kind == Kind.Artist) ArtistScreen(r.id) else CollectionScreen(r.kind, r.id)
                                 }
                             }

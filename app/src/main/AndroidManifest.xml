@@ -24,7 +24,15 @@
             android:exported="true"
             android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
-            android:windowSoftInputMode="adjustResize" />
+            android:windowSoftInputMode="adjustResize">
+            <!-- navidroid://jam?url=..., which a Jam's web page offers as "Open in the app" -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="navidroid" android:host="jam" />
+            </intent-filter>
+        </activity>
 
         <!-- launcher entries, one per app icon; Settings enables one at a time -->
         <activity-alias
