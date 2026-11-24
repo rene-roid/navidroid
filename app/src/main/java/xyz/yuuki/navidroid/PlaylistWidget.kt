@@ -25,7 +25,8 @@ import androidx.glance.appwidget.SizeMode
 import androidx.glance.action.actionStartActivity
 import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.provideContent
-import androidx.glance.appwidget.state.getAppWidgetState
+import androidx.glance.currentState
+import androidx.compose.runtime.remember
 import androidx.glance.background
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Box
@@ -76,10 +77,14 @@ class PlaylistWidget : GlanceAppWidget() {
     override val sizeMode = SizeMode.Single
 
     // Only reads what the config activity saved: no network here, the cover is a file.
-    override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val prefs = getAppWidgetState(context, PreferencesGlanceStateDefinition, id)
-        val cover = withContext(Dispatchers.IO) { prefs[PW_COVER]?.let(BitmapFactory::decodeFile) }
-        provideContent { PlaylistContent(context, prefs, cover) }
+    override suspend fun provideGlance(context: Context, id: GlanceId) = provideContent {
+        // The state is read inside the composition: the session that drew the empty widget is still running when the choice is saved,
+        // and update() only recomposes it, so a value read once up here would stay the empty one.
+        val prefs = currentState<Preferences>()
+        val path = prefs[PW_COVER]
+        // A 300 px file, small enough to decode in place; keyed on the pick since reconfiguring rewrites the same path.
+        val cover = remember(path, prefs[PW_ID]) { path?.let(BitmapFactory::decodeFile) }
+        PlaylistContent(context, prefs, cover)
     }
 }
 

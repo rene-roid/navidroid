@@ -86,16 +86,16 @@ fun ShortcutHandler(nav: Nav, player: PlayerState?) {
 
 private val RECENT_KINDS = setOf(Kind.Playlist, Kind.Album, Kind.ArtistMix, Kind.ArtistRadio)
 
-/** Keeps the two latest collections played as dynamic launcher shortcuts; the shortcuts themselves are the storage. */
+/** Keeps the latest collection played as a dynamic launcher shortcut (launchers show 4, three of them the static ones); the shortcut is the storage. */
 fun recordRecent(c: Collection) {
     if (c.kind !in RECENT_KINDS) return
     val ctx = App.it
     val sm = ctx.getSystemService(ShortcutManager::class.java) ?: return
-    fun make(id: String, label: CharSequence, intent: Intent, rank: Int) = ShortcutInfo.Builder(ctx, id).setShortLabel(label).setLongLabel(label)
-        .setIcon(Icon.createWithResource(ctx, R.mipmap.ic_launcher)).setIntent(intent).setRank(rank).build()
     val open = ShortcutAction.Open(c.kind, c.id)
-    val previous = sm.dynamicShortcuts.filter { it.id != open.spec }.minByOrNull { it.rank }
     runCatching {
-        sm.dynamicShortcuts = listOfNotNull(make(open.spec, c.title, open.intent(ctx), 0), previous?.let { make(it.id, it.shortLabel!!, it.intent!!, 1) })
+        sm.dynamicShortcuts = listOf(
+            ShortcutInfo.Builder(ctx, open.spec).setShortLabel(c.title).setLongLabel(c.title)
+                .setIcon(Icon.createWithResource(ctx, R.mipmap.ic_launcher)).setIntent(open.intent(ctx)).build(),
+        )
     }
 }
