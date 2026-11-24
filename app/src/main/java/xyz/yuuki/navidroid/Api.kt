@@ -154,11 +154,12 @@ data class Collection(
     val artistId: String? = null,
     val starred: Boolean = false,
     val isPublic: Boolean = false,
+    val smart: Boolean = false,
 ) {
     val duration get() = songs.sumOf { it.duration }
 
     /** A playlist [user] made by hand, as opposed to a generated mix or someone else's. */
-    fun editableBy(user: String?) = kind == Kind.Playlist && mix == null && by == user && user != null
+    fun editableBy(user: String?) = kind == Kind.Playlist && mix == null && !smart && by == user && user != null
 
     fun toJson(): JSONObject = JSONObject()
         .put("kind", kind.name).put("id", id).put("title", title).put("description", description)
@@ -175,7 +176,7 @@ data class Collection(
 
         fun of(p: Playlist, songs: List<Song>) = Collection(
             Kind.Playlist, p.id, p.mix?.title ?: p.name, p.mix?.description ?: p.comment.ifBlank { null },
-            p.mix?.by ?: p.owner, p.coverArt, songs, p.mix, isPublic = p.isPublic,
+            p.mix?.by ?: p.owner, p.coverArt, songs, p.mix, isPublic = p.isPublic, smart = p.smart,
         )
     }
 }

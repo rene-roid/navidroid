@@ -28,3 +28,16 @@ class PlaylistEditTest {
         assertEquals(listOf("b", "d"), dups.map { it.id })
     }
 }
+
+class EditableTest {
+    private fun pl(comment: String = "", smart: Boolean = false) =
+        Collection.of(Playlist("p", "Road", comment, "me", 0, 0, null, smart = smart), emptyList())
+
+    @Test
+    fun onlyYourHandMadePlaylistsAreEditable() {
+        org.junit.Assert.assertEquals(
+            listOf(true, false, false, false),
+            listOf(pl().editableBy("me"), pl().editableBy("ana"), pl(smart = true).editableBy("me"), pl("nb1:dailymix:dailymix-1").editableBy("me")),
+        )
+    }
+}
