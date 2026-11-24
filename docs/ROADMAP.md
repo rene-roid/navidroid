@@ -1,103 +1,59 @@
 # Plan de mejoras de navidroid
 
-Plan por olas. Cada paso termina en algo que se puede comprobar en el emulador contra un Navidrome
-real, y cada ola se puede publicar sola. La ola 1 ya está hecha en la rama `t3/app-wave-1`.
+El plan está completo y todo está en `main`. Cada ola entró como un PR propio, verificado en un
+emulador contra un Navidrome real antes del merge. Abajo está qué hay, dónde y lo que se decidió no hacer.
 
 ## Cómo se prueba
 
 - Servidor: Navidrome 0.64 local con una biblioteca generada con `ffmpeg` (50 canciones, 10 álbumes,
-  5 géneros, colaboraciones "feat."). Playlists con comentarios `nb1:` de NaviBeat para tener mixes
-  y radios, y una segunda usuaria para "Escuchando ahora".
-- Emulador: un AVD propio (`navidroid_wave`), la app en `githubDebug`, conectada a `http://10.0.2.2:4533`.
-- Cada paso: tests unitarios de la lógica pura (`./gradlew testGithubDebugUnitTest`) y captura del
-  emulador de la pantalla que cambia. La build `xiaomiRelease` (R8) tiene que compilar antes de publicar.
+  5 géneros, colaboraciones "feat."), playlists con comentarios `nb1:` de NaviBeat para tener mixes
+  y radios, una smart playlist `.nsp` y una segunda usuaria (`ana`).
+- Emulador: un AVD propio (`navidroid_wave`, puerto 5560), la app en `githubDebug` conectada a
+  `http://10.0.2.2:4533`. La build `githubRelease` (R8) se prueba igual antes de cerrar.
+- Antes de publicar: instalar y abrir la build release, no solo compilarla, y pasar
+  `scripts/check-release-ctors.sh` sobre el APK.
+- Cada PR: tests unitarios de la lógica pura (`./gradlew testGithubDebugUnitTest`, 84 tests) y un
+  verificador que recorre los escenarios en el emulador con capturas, sin leer el código.
 
-## Ola 1. Hecha
+## Hecho
 
-| Paso | Qué cambia para ti | Prueba |
-|---|---|---|
-| 1 | Me gusta muestra primero lo último que te gustó | `LikedTest`; Navidrome devuelve lo más nuevo primero y la app lo invertía |
-| 2 | Inicio enseña quién más está escuchando en el servidor ("ana on Feishin"), y tus otros dispositivos | `ListeningTest`; captura con otra usuaria reproduciendo |
-| 3 | Tu biblioteca: chips tipo Spotify (X para limpiar, subfiltros por tipo, combinables), Radios separadas de Mixes y de tus playlists, orden (guardados, A-Z, creador), lista o cuadrícula, interruptor para ocultar mixes y radios | `LibraryTest`; capturas de chips, radios y cuadrícula |
-| 4 | Tocar una canción suelta arranca su radio: suena al instante y se añaden canciones parecidas, marcadas "Autoplay · songs like X" con botón Clear. "Start song radio" en el menú de cada canción. Autoplay activado por defecto. Cola con "Clear queue" y "Save as playlist" | `RadioTest`; captura de la cola |
-| 5 | Buscar: búsquedas recientes, estante "Discover" de álbumes que nunca has puesto, "Shuffle your library", chips All/Songs/Artists/Albums/Genres, "Top result", error de red distinto de "sin resultados" | `SearchRankTest`; capturas |
-| 6 | Ajustes rediseñados: tarjeta de cuenta con servidor, versión y latencia; categorías con icono y resumen en vivo; páginas propias de Reproducción, Descargas, Servidor, Almacenamiento y Acerca de | capturas |
-| 7 | Login en dos pasos: la dirección se comprueba mientras escribes ("Navidrome 0.64.2 · not encrypted"), luego usuario y contraseña; direcciones extra opcionales. Añadir direcciones en Ajustes con la misma comprobación. Cerrar sesión pide confirmación y borra los datos de la cuenta | `ProbeTest`; capturas del login y del error "connection refused" |
-| 8 | Widget "Now playing" redimensionable (pequeño, ancho, grande, alto) con fondo del color de la portada, oscuro o translúcido, y controles opcionales. Funciona con la app cerrada | `NowPlayingTest`; capturas, pausa y play con el proceso muerto |
+| PR | Qué cambia para ti |
+|---|---|
+| [#2](https://github.com/rene-roid/navidroid/pull/2) | Me gusta con lo más nuevo arriba. "Escuchando ahora" en Inicio. Biblioteca con chips combinables, Radios separadas, orden, cuadrícula y ocultar mixes. Radio al tocar una canción. Buscar nuevo. Ajustes y login rediseñados. Widget Now Playing |
+| [#3](https://github.com/rene-roid/navidroid/pull/3) | Estantes de descubrimiento en Inicio, "Fans also like", décadas, radio de género y década, canciones nuevas primero en la radio, smart playlists |
+| [#4](https://github.com/rene-roid/navidroid/pull/4) | Editar playlists (reordenar, quitar, renombrar, pública, borrar), seleccionar todo, deslizar para añadir a la cola, avisos al añadir, portadas de playlist |
+| [#5](https://github.com/rene-roid/navidroid/pull/5) | Varias cuentas en servidores distintos y cambiar entre ellas; apariencia y calidad compartidas |
+| [#6](https://github.com/rene-roid/navidroid/pull/6) | Jams: el móvil que suena comparte un enlace; los invitados eligen música desde el navegador o la app, con permisos configurables. Funciona en la red local y por Tailscale |
+| [#7](https://github.com/rene-roid/navidroid/pull/7) | Tus estadísticas, enlaces para compartir, descargas automáticas de Me gusta y de las mixes diarias |
+| [#8](https://github.com/rene-roid/navidroid/pull/8) | Accesos directos del icono, widget de playlist, volver a la misma pantalla tras cerrar el proceso |
+| [#9](https://github.com/rene-roid/navidroid/pull/9) | Color del fondo de pantalla, ordenar y ocultar secciones de Inicio, densidad de listas, reproductor Vinilo y Letras primero, controles grandes, vista previa del widget |
+| [#10](https://github.com/rene-roid/navidroid/pull/10) | Cola arrastrable con historial, temporizador, velocidad, ReplayGain, "me gusta" en la notificación, shuffle sin repetir artista, Android Auto |
+| [#11](https://github.com/rene-roid/navidroid/pull/11) | Las builds release (R8) vuelven a arrancar y los widgets cargan; `scripts/check-release-ctors.sh` lo comprueba en cada APK |
 
-## Ola 2. Varias cuentas y servidores
+## Sin verificar en un dispositivo
 
-Ahora "servidores" significa varias direcciones del mismo servidor y la misma cuenta. Para tener
-cuentas distintas (tu Navidrome, el de un amigo) hace falta separar los datos por cuenta.
+- El árbol de Android Auto: tiene tests y el servicio está declarado, pero en el emulador no hay
+  ningún cliente que lo recorra. Se prueba con el Desktop Head Unit o activando "fuentes
+  desconocidas" en Android Auto.
+- La pantalla trasera del Xiaomi con el nuevo `MediaLibraryService`, el móvil con letra grande y
+  navegación de 3 botones, las vistas de tablet y los widgets en Android 9 a 11.
+- "Because you listened to" y "Fans also like" se ocultan en el servidor de prueba porque no tiene
+  datos de artistas similares (Last.fm); en un servidor con esos datos deberían aparecer.
 
-1. Modelo: `Account(id, name, endpoints, username, token, salt)` en unas preferencias globales, más
-   la cuenta activa. La cuenta que ya existe se queda con las rutas de hoy, así no se mueve nada.
-2. Una función `App.dir(nombre)` da la carpeta de cada cuenta (`filesDir/a-<id>/...`); `Prefs`,
-   `Offline` (descargas, portadas, snapshots), `queue.json` y la caché `meta/` pasan a usarla.
-   Comprobación: test de que dos cuentas no comparten ni preferencias ni carpetas.
-3. Cambiar de cuenta reinicia el proceso en la nueva (las cachés de Media3 no se pueden abrir dos
-   veces). Comprobación: descargas de la cuenta A siguen ahí al volver de B.
-4. UI: en la tarjeta de cuenta de Ajustes, "Cambiar de cuenta" con la lista y "Añadir cuenta", que
-   reutiliza el login de dos pasos.
-5. Antes de empezar: la rama `t3/local-folder-music-library` (sin commitear) toca las mismas clases.
-   Hay que integrarla primero o rebasar esta ola encima.
+## Decidido no hacer
 
-## Ola 3. Jams (escuchar juntos)
+- Tema claro: la identidad de la app es el cielo nocturno con aurora, y cambiaría cada pantalla.
+  En su lugar está el acento del fondo de pantalla.
+- Crossfade: ExoPlayer no lo trae; haría falta un segundo reproductor y sincronizarlos.
+- Traducir letras y modo karaoke: lo primero manda tus letras a un servicio externo; lo segundo
+  necesita tiempos por palabra que Subsonic no da.
+- Escuchar a la vez en varios móviles dentro de un Jam: el Jam actual es "misma habitación" (suena
+  el anfitrión y los demás eligen). Sincronizar el audio entre móviles necesita un relé y corrección
+  de reloj; es el siguiente paso natural si hace falta.
 
-Navidrome no tiene sesiones compartidas ni playlists colaborativas, así que hace falta un pequeño
-relé. Diseño propuesto:
+## Ideas para después
 
-1. Relé: un servicio mínimo (WebSocket, unos cientos de líneas en Go o Node) que cualquiera puede
-   alojar junto a su Navidrome, o un contenedor Docker. Guarda en memoria salas con `jamId`, anfitrión,
-   cola y estado de reproducción (canción, posición, play/pausa, hora del servidor).
-2. Enlace: `https://<relé>/j/<jamId>` y deep link `navidroid://jam/<jamId>`; un QR en pantalla.
-3. Permisos configurables por el anfitrión: solo escuchar, añadir a la cola, votar para saltar, o
-   control total. Límite de canciones por persona.
-4. Reproducción: cada invitado reproduce desde su propio Navidrome si la canción existe en su
-   biblioteca (mismo servidor: mismo id; otro servidor: buscar por título y artista o MusicBrainz id).
-   Sincronía con el reloj del relé, corrigiendo la deriva con pequeños saltos.
-5. Modo "misma habitación": solo el anfitrión suena y los demás eligen música desde su móvil.
-6. Comprobación: dos emuladores en la misma sala, la cola y la posición coinciden en menos de 300 ms.
-
-Esto es lo más caro del plan. Recomiendo empezar por el modo "misma habitación" en la red local
-(descubrimiento por NSD, sin relé), que ya resuelve la fiesta en casa con una fracción del trabajo.
-
-## Ola 4. Descubrir música
-
-1. "Porque escuchaste X": estantes en Inicio a partir de los últimos álbumes, con `getSimilarSongs2`
-   y `getArtistInfo2`.
-2. "Nunca escuchado": álbumes y artistas con `playCount == 0`, con un botón de shuffle.
-3. "Hoy hace X años": lo que escuchabas o lo que salió en esta fecha.
-4. Radio por género y por década desde las tarjetas de Buscar.
-5. Artistas similares en la página de artista (ya llega en `getArtistInfo2`).
-6. Filtro "solo canciones que no he escuchado" en las radios.
-7. Smart playlists de Navidrome (`.nsp`) mostradas como mixes propios.
-
-## Ola 5. Usabilidad y control
-
-1. Reordenar la cola arrastrando y ver lo que ya sonó.
-2. Editar playlists propias: quitar, reordenar, renombrar, portada.
-3. Seleccionar todo en listas y gestos de deslizar (deslizar para añadir a la cola).
-4. Temporizador de apagado, velocidad, crossfade y ganancia de reproducción (ReplayGain).
-5. Botón de "me gusta" en la notificación y en el widget grande.
-6. Android Auto y Wear: pasar a `MediaLibraryService` con árbol de navegación.
-7. Restaurar la pila de navegación tras matar el proceso.
-8. Accesos directos del lanzador (Me gusta, Shuffle, última radio).
-9. Un segundo widget: atajo a una playlist o mix elegida.
-
-## Ola 6. Aspecto y personalización
-
-1. Tema claro y "seguir al sistema", y Material You (color dinámico) como opción de acento.
-2. Reordenar y ocultar secciones de Inicio.
-3. Tamaño de portadas y densidad de listas.
-4. Reproductor: estilos (vinilo, portada grande, letras a pantalla completa).
-5. Página de configuración del widget con vista previa en vivo.
-
-## Ideas sueltas
-
-- Estadísticas personales (tu "Wrapped" con los scrobbles de Navidrome).
-- Compartir canción o álbum con un enlace público (`createShare` de Subsonic).
-- Letras: traducción y modo karaoke.
-- Cola "inteligente": no repetir artista dos veces seguidas en shuffle.
-- Descargas automáticas de Me gusta y de las mixes diarias en Wi-Fi.
-- Modo coche: botones grandes en el reproductor.
+- Portadas en Android Auto sin conexión (un ContentProvider sobre la caché de portadas).
+- "Me gusta" en el widget grande.
+- Reanudar la reproducción tras reiniciar el móvil (`onPlaybackResumption`).
+- Integrar la rama `t3/local-folder-music-library` (música de carpetas del móvil) sobre las cuentas.
