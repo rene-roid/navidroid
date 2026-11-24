@@ -744,7 +744,7 @@ fun PlaybackSettingsScreen() {
         }
         item {
             Section("Queue") {
-                SwitchRow("Autoplay", "When the queue ends, keep playing songs like the last ones", autoplay, Icons.Rounded.AllInclusive, Green) {
+                SwitchRow("Autoplay", "When the queue ends, keep playing songs like the last ones. Repeat all turns it off", autoplay, Icons.Rounded.AllInclusive, Green) {
                     autoplay = it
                     prefs.autoplay = it
                 }
