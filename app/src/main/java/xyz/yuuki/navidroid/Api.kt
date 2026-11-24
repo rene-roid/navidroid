@@ -252,6 +252,10 @@ class Prefs(ctx: Context) {
         get() = p.getStringSet("hiddenPlaylists", null) ?: emptySet()
         set(v) = p.edit().putStringSet("hiddenPlaylists", v).apply()
 
+    var librarySort by int("librarySort", 0)
+    var libraryGrid by bool("libraryGrid", false)
+    var libraryMixes by bool("libraryMixes", true)
+
     /** Artist mixes and radios saved to the library; they're made on the phone, so they live here too. */
     var savedMixes: List<Tile>
         get() = p.getString("savedMixes", null)?.let(::JSONArray).objects()
