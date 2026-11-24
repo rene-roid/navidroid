@@ -188,6 +188,20 @@ fun AlbumHeader(art: String?, spinning: Boolean, sleeve: Dp, modifier: Modifier 
         delay(200)
         out.animateTo(1f, spring(0.65f, Spring.StiffnessVeryLow))
     }
+    val d = sleeve * 0.94f
+    Box(modifier.width(sleeve * 1.4f).height(sleeve)) {
+        Record(
+            art, spinning,
+            Modifier.align(Alignment.CenterStart).offset(x = (sleeve - d) / 2).size(d)
+                .graphicsLayer { translationX = out.value * sleeve.toPx() * 0.42f }.shadow(10.dp, CircleShape),
+        )
+        Cover(art, 600, Modifier.size(sleeve).shadow(20.dp, RoundedCornerShape(4.dp)))
+    }
+}
+
+/** A record with the cover as its label, turning at 33⅓ rpm while [spinning]; [modifier] gives it a square to fill. */
+@Composable
+fun Record(art: String?, spinning: Boolean, modifier: Modifier) {
     // Keeps its angle when paused, like a real turntable.
     val angle = remember { mutableFloatStateOf(0f) }
     LaunchedEffect(spinning) {
@@ -198,33 +212,26 @@ fun AlbumHeader(art: String?, spinning: Boolean, sleeve: Dp, modifier: Modifier 
             last = it
         }
     }
-    val d = sleeve * 0.94f
-    Box(modifier.width(sleeve * 1.4f).height(sleeve)) {
-        Box(
-            Modifier.align(Alignment.CenterStart).offset(x = (sleeve - d) / 2).size(d)
-                .graphicsLayer { translationX = out.value * sleeve.toPx() * 0.42f }.shadow(10.dp, CircleShape),
-        ) {
-            Canvas(Modifier.fillMaxSize()) {
-                val r = size.minDimension / 2
-                drawCircle(Brush.radialGradient(listOf(Color(0xFF1C1C1C), Color(0xFF080808)), center, r))
-                // Fine grooves, darker gaps between tracks, and a lighter lip at the edge.
-                var g = r * 0.42f
-                while (g < r * 0.97f) {
-                    drawCircle(Color.White.copy(alpha = 0.05f), g, style = Stroke(0.6.dp.toPx()))
-                    g += 1.8.dp.toPx()
-                }
-                for (gap in floatArrayOf(0.55f, 0.68f, 0.83f)) drawCircle(Color.Black, r * gap, style = Stroke(2.dp.toPx()))
-                drawCircle(Color.White.copy(alpha = 0.12f), r - 1.dp.toPx(), style = Stroke(1.dp.toPx()))
+    Box(modifier) {
+        Canvas(Modifier.fillMaxSize()) {
+            val r = size.minDimension / 2
+            drawCircle(Brush.radialGradient(listOf(Color(0xFF1C1C1C), Color(0xFF080808)), center, r))
+            // Fine grooves, darker gaps between tracks, and a lighter lip at the edge.
+            var g = r * 0.42f
+            while (g < r * 0.97f) {
+                drawCircle(Color.White.copy(alpha = 0.05f), g, style = Stroke(0.6.dp.toPx()))
+                g += 1.8.dp.toPx()
             }
-            Cover(art, 300, Modifier.align(Alignment.Center).size(d * 0.38f).graphicsLayer { rotationZ = angle.floatValue }, CircleShape)
-            // Light catching the grooves stays put while the record turns under it.
-            Canvas(Modifier.fillMaxSize()) {
-                val glint = Color.White.copy(alpha = 0.13f)
-                drawCircle(Brush.sweepGradient(listOf(Color.Transparent, glint, Color.Transparent, Color.Transparent, glint, Color.Transparent, Color.Transparent)))
-                drawCircle(Color(0xFF121212), 2.5.dp.toPx())
-            }
+            for (gap in floatArrayOf(0.55f, 0.68f, 0.83f)) drawCircle(Color.Black, r * gap, style = Stroke(2.dp.toPx()))
+            drawCircle(Color.White.copy(alpha = 0.12f), r - 1.dp.toPx(), style = Stroke(1.dp.toPx()))
         }
-        Cover(art, 600, Modifier.size(sleeve).shadow(20.dp, RoundedCornerShape(4.dp)))
+        Cover(art, 300, Modifier.align(Alignment.Center).fillMaxSize(0.38f).graphicsLayer { rotationZ = angle.floatValue }, CircleShape)
+        // Light catching the grooves stays put while the record turns under it.
+        Canvas(Modifier.fillMaxSize()) {
+            val glint = Color.White.copy(alpha = 0.13f)
+            drawCircle(Brush.sweepGradient(listOf(Color.Transparent, glint, Color.Transparent, Color.Transparent, glint, Color.Transparent, Color.Transparent)))
+            drawCircle(Color(0xFF121212), 2.5.dp.toPx())
+        }
     }
 }
 

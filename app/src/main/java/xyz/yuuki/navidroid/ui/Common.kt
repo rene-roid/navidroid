@@ -651,6 +651,7 @@ fun DownloadedMark() = Icon(Icons.Rounded.ArrowCircleDown, "Downloaded", Modifie
 fun TrackRow(song: Song, onClick: () -> Unit, number: Int? = null, showArt: Boolean = true, inset: androidx.compose.ui.unit.Dp = 16.dp) {
     val player = LocalPlayer.current
     val current = player?.song?.id == song.id
+    val compact = LocalCompact.current
     val states by App.it.offline.states.collectAsStateWithLifecycle()
     // confirmValueChange runs for every settle attempt of a gesture; the value itself changes once per swipe, so act on that.
     val swipe = rememberSwipeToDismissBoxState()
@@ -669,12 +670,12 @@ fun TrackRow(song: Song, onClick: () -> Unit, number: Int? = null, showArt: Bool
         },
         enableDismissFromEndToStart = false,
     ) { Row(
-        Modifier.fillMaxWidth().pickable(song, onClick).padding(start = inset, top = 6.dp, bottom = 6.dp),
+        Modifier.fillMaxWidth().pickable(song, onClick).padding(start = inset, top = if (compact) 2.dp else 6.dp, bottom = if (compact) 2.dp else 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (number != null) Text("$number", Modifier.width(28.dp), color = if (current) Accent else Sub, style = MaterialTheme.typography.bodyMedium)
         if (showArt) {
-            Cover(song.coverArt, 120, Modifier.size(48.dp))
+            Cover(song.coverArt, 120, Modifier.size(if (compact) 40.dp else 48.dp))
             Spacer(Modifier.width(12.dp))
         }
         Column(Modifier.weight(1f)) {

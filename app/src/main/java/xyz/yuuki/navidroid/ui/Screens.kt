@@ -13,6 +13,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.zIndex
 import xyz.yuuki.navidroid.EditDraft
+import xyz.yuuki.navidroid.HOME_SECTIONS
+import xyz.yuuki.navidroid.homeOrder
+import androidx.compose.foundation.layout.sizeIn
 import xyz.yuuki.navidroid.networkReason
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -294,23 +297,27 @@ fun HomeScreen() {
             }
             if (!online || (home.data == null && home.error != null)) item("offline") { OfflineHome(pinnedTiles(pins)) }
             home.data?.let { h ->
-                item("quick") { QuickGrid(h.quick.filter(Hidden::shows)) }
-                if (online && listening.isNotEmpty()) item("listening") {
-                    SectionHeader("Listening now")
-                    LazyRow(contentPadding = PaddingValues(horizontal = 10.dp)) {
-                        items(listening, key = { "${it.id}:${it.subtitle}" }) { Card(it) }
-                    }
-                }
-                items(h.sections.map { it.copy(tiles = it.tiles.filter(Hidden::shows)) }.filter { it.tiles.isNotEmpty() }, key = { it.key }) { s ->
-                    SectionHeader(s.title) { nav.go(Route.More(s.key)) }
-                    LazyRow(contentPadding = PaddingValues(horizontal = 10.dp)) {
-                        items(s.tiles, key = { "${it.kind}:${it.id}" }) { Card(it) }
-                    }
-                }
-                if (online) items(shelves.data.orEmpty(), key = { "shelf:${it.key}" }) { s ->
-                    SectionHeader(s.title)
-                    LazyRow(contentPadding = PaddingValues(horizontal = 10.dp)) {
-                        items(s.tiles, key = { "${it.kind}:${it.id}" }) { Card(it) }
+                // Only the sections loaded with Home have a page of their own to open.
+                val pages = h.sections.map { it.key }
+                val sections = (h.sections + if (online) shelves.data.orEmpty() else emptyList()).associateBy { it.key }
+                homeOrder(homeSaved, HOME_SECTIONS.map { it.first }).filter { it !in homeHidden }.forEach { key ->
+                    when (key) {
+                        "quick" -> item(key) { QuickGrid(h.quick.filter(Hidden::shows)) }
+                        "listening" -> if (online && listening.isNotEmpty()) item(key) {
+                            SectionHeader("Listening now")
+                            LazyRow(contentPadding = PaddingValues(horizontal = 10.dp)) {
+                                items(listening, key = { "${it.id}:${it.subtitle}" }) { Card(it) }
+                            }
+                        }
+                        else -> sections[key]?.let { s ->
+                            val tiles = s.tiles.filter(Hidden::shows)
+                            if (tiles.isNotEmpty()) item(key) {
+                                SectionHeader(s.title, if (key in pages) ({ nav.go(Route.More(key)) }) else null)
+                                LazyRow(contentPadding = PaddingValues(horizontal = 10.dp)) {
+                                    items(tiles, key = { "${it.kind}:${it.id}" }) { Card(it) }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -684,10 +691,12 @@ private fun BrowseCard(name: String, art: String?, modifier: Modifier = Modifier
 
 @Composable
 fun ListRow(title: String, subtitle: String, cover: @Composable () -> Unit, trailing: @Composable () -> Unit = {}, pick: Any? = null, onClick: () -> Unit) = Row(
-    Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).then(if (pick != null) Modifier.pickable(pick, onClick) else Modifier.clickable(onClick = onClick)).padding(vertical = 6.dp),
+    Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).then(if (pick != null) Modifier.pickable(pick, onClick) else Modifier.clickable(onClick = onClick))
+        .padding(vertical = if (LocalCompact.current) 2.dp else 6.dp),
     verticalAlignment = Alignment.CenterVertically,
 ) {
-    cover()
+    // The callers size their covers; a compact list caps them here, in one place.
+    Box(if (LocalCompact.current) Modifier.sizeIn(maxWidth = 48.dp, maxHeight = 48.dp) else Modifier) { cover() }
     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
         Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Row(verticalAlignment = Alignment.CenterVertically) {

@@ -247,6 +247,9 @@ fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
     val color = rememberCoverColor(song.coverArt)
     val lyrics = rememberLoad("lyrics:${song.id}") { App.it.api.lyrics(song.id) }
     val pos = rememberPosition(p, 200)
+    val large = largeControls
+    // A song without lyrics shows its cover as usual.
+    val lyricsFirst = nowPlayingStyle == 2 && (lyrics.data != null || lyrics.loading)
 
     Box(Modifier.fillMaxSize().then(rememberPullToClose(onClose))) {
         Aurora(song.coverArt, null, modifier = Modifier.fillMaxSize(), plain = color)
@@ -261,14 +264,20 @@ fun NowPlaying(p: PlayerState, onClose: () -> Unit) {
                     SongMenu(song, Color.White)
                 }
             }
-            item("art") { SwipeArt(p, song) }
-            item("info") {
-                SongInfo(song) { goToArtist(song) }
+            if (lyricsFirst) {
+                item("info") { SongInfo(song, large, cover = true) { goToArtist(song) } }
+                item("words") {
+                    val area = Modifier.fillMaxWidth().fillParentMaxHeight(.5f).padding(horizontal = 8.dp)
+                    lyrics.data?.let { LyricLines(p, it, pos, area, 24.sp) } ?: Spacer(area)
+                }
+            } else {
+                item("art") { SwipeArt(p, song, vinyl = nowPlayingStyle == 1) }
+                item("info") { SongInfo(song, large) { goToArtist(song) } }
             }
-            item("seek") { Seek(p, song, pos) }
-            item("controls") { Controls(p) }
+            item("seek") { Seek(p, song, pos, large = large) }
+            item("controls") { if (large) Controls(p, play = 92.dp, skip = 56.dp, side = 34.dp) else Controls(p) }
             item("jam") { JamPill(Modifier.padding(top = 4.dp)) }
-            lyrics.data?.let { l -> item("lyrics") { LyricsCard(p, l, pos, color) } }
+            if (!lyricsFirst) lyrics.data?.let { l -> item("lyrics") { LyricsCard(p, l, pos, color) } }
             if (p.upNext.isNotEmpty()) item("next") { QueueHeader(p, Modifier.padding(start = 24.dp, top = 28.dp, end = 8.dp), MaterialTheme.typography.titleLarge) }
             queue(p, start = 24.dp)
             item("bottom") {
@@ -326,18 +335,25 @@ private fun LazyListScope.queue(p: PlayerState, start: Dp, cover: Dp = 44.dp) = 
 }
 
 @Composable
-private fun SongInfo(song: Song, onArtist: () -> Unit) = Row(Modifier.fillMaxWidth().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun SongInfo(song: Song, large: Boolean = false, cover: Boolean = false, onArtist: () -> Unit) = Row(
+    Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = if (cover) 12.dp else 0.dp), verticalAlignment = Alignment.CenterVertically,
+) {
+    if (cover) {
+        Cover(song.coverArt, 300, Modifier.size(if (large) 80.dp else 64.dp), RoundedCornerShape(6.dp))
+        Spacer(Modifier.width(14.dp))
+    }
     Column(Modifier.weight(1f)) {
-        Text(song.title, style = MaterialTheme.typography.headlineSmall, maxLines = 1, modifier = Modifier.basicMarquee())
+        Text(song.title, style = MaterialTheme.typography.run { if (large) displaySmall else headlineSmall }, maxLines = 1, modifier = Modifier.basicMarquee())
         Text(
-            song.artist, style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = .7f), maxLines = 1,
+            song.artist, style = MaterialTheme.typography.run { if (large) titleLarge else bodyLarge }, color = Color.White.copy(alpha = .7f), maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.clickable(enabled = song.artistId != null, onClick = onArtist),
         )
     }
-    IconButton({ Likes.toggle(song) }) {
+    val heart = if (large) 38.dp else 28.dp
+    IconButton({ Likes.toggle(song) }, Modifier.size(heart + 20.dp)) {
         val liked = Likes.isLiked(song)
-        if (liked) LikedHeart(Modifier.size(28.dp), "Unlike") else Icon(Icons.Rounded.FavoriteBorder, "Like", Modifier.size(28.dp), tint = Color.White)
+        if (liked) LikedHeart(Modifier.size(heart), "Unlike") else Icon(Icons.Rounded.FavoriteBorder, "Like", Modifier.size(heart), tint = Color.White)
     }
 }
 
@@ -373,12 +389,10 @@ private fun rememberPullToClose(onClose: () -> Unit): Modifier {
 
 /** Album art you can swipe sideways to skip, like the big streaming apps. */
 @Composable
-private fun SwipeArt(p: PlayerState, song: Song) = Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp)) {
-    Cover(
-        song.coverArt, 600,
-        Modifier.fillMaxWidth().aspectRatio(1f).swipeToSkip(p, song).shadow(24.dp, RoundedCornerShape(8.dp)),
-        RoundedCornerShape(8.dp),
-    )
+private fun SwipeArt(p: PlayerState, song: Song, vinyl: Boolean = false) = Box(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp)) {
+    val square = Modifier.fillMaxWidth().aspectRatio(1f).swipeToSkip(p, song)
+    if (vinyl) Record(song.coverArt, p.isPlaying, square.shadow(24.dp, CircleShape))
+    else Cover(song.coverArt, 600, square.shadow(24.dp, RoundedCornerShape(8.dp)), RoundedCornerShape(8.dp))
 }
 
 /** Drag sideways to go to the next or previous song; the content follows the finger and fades. */
@@ -592,7 +606,8 @@ private fun LyricLines(p: PlayerState, l: xyz.yuuki.navidroid.Lyrics, pos: Long,
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun Seek(p: PlayerState, song: Song, pos: Long, inset: Dp = 16.dp, inline: Boolean = false) {
+private fun Seek(p: PlayerState, song: Song, pos: Long, inset: Dp = 16.dp, inline: Boolean = false, large: Boolean = false) {
+    val time = MaterialTheme.typography.run { if (large) titleMedium else labelSmall }
     var dragging by remember { mutableStateOf<Float?>(null) }
     val dur = (p.c.duration.takeIf { it > 0 } ?: (song.duration * 1000L)).toFloat()
     val value = dragging ?: (pos / dur).coerceIn(0f, 1f)
@@ -606,7 +621,7 @@ private fun Seek(p: PlayerState, song: Song, pos: Long, inset: Dp = 16.dp, inlin
             },
             modifier = m,
             colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White, inactiveTrackColor = Color.White.copy(alpha = .25f)),
-            thumb = { Box(Modifier.size(14.dp).clip(CircleShape).background(Color.White)) },
+            thumb = { Box(Modifier.size(if (large) 22.dp else 14.dp).clip(CircleShape).background(Color.White)) },
             track = { st ->
                 Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(Color.White.copy(alpha = .25f))) {
                     Box(Modifier.fillMaxWidth(st.value).height(4.dp).background(Color.White))
@@ -614,8 +629,8 @@ private fun Seek(p: PlayerState, song: Song, pos: Long, inset: Dp = 16.dp, inlin
             },
         )
     }
-    val elapsed = @Composable { Text(formatTime((value * dur).toLong()), style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = .7f)) }
-    val total = @Composable { Text(formatTime(dur.toLong()), style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = .7f)) }
+    val elapsed = @Composable { Text(formatTime((value * dur).toLong()), style = time, color = Color.White.copy(alpha = .7f)) }
+    val total = @Composable { Text(formatTime(dur.toLong()), style = time, color = Color.White.copy(alpha = .7f)) }
     // Inline puts the times either side of the bar, for the short landscape card.
     if (inline) Row(Modifier.padding(horizontal = inset), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         elapsed()
@@ -632,33 +647,35 @@ private fun Seek(p: PlayerState, song: Song, pos: Long, inset: Dp = 16.dp, inlin
 }
 
 @Composable
-private fun Controls(p: PlayerState, play: Dp = 68.dp, inset: Dp = 16.dp, vertical: Dp = 8.dp, modifier: Modifier = Modifier) = Row(
+private fun Controls(
+    p: PlayerState, play: Dp = 68.dp, inset: Dp = 16.dp, vertical: Dp = 8.dp, modifier: Modifier = Modifier, skip: Dp = 40.dp, side: Dp = 24.dp,
+) = Row(
     modifier.fillMaxWidth().padding(horizontal = inset, vertical = vertical),
     horizontalArrangement = Arrangement.SpaceBetween,
     verticalAlignment = Alignment.CenterVertically,
 ) {
-    ShuffleButton(p)
-    SkipButton(p, next = false, 40.dp)
+    ShuffleButton(p, side)
+    SkipButton(p, next = false, skip)
     PlayPause(p, play)
-    SkipButton(p, next = true, 40.dp)
-    RepeatButton(p)
+    SkipButton(p, next = true, skip)
+    RepeatButton(p, side)
 }
 
 @Composable
-private fun ShuffleButton(p: PlayerState) = IconButton({ p.c.shuffleModeEnabled = !p.shuffle }) {
-    Icon(Icons.Rounded.Shuffle, "Shuffle", tint = if (p.shuffle) Accent else Color.White)
+private fun ShuffleButton(p: PlayerState, size: Dp = 24.dp) = IconButton({ p.c.shuffleModeEnabled = !p.shuffle }, Modifier.size(size + 24.dp)) {
+    Icon(Icons.Rounded.Shuffle, "Shuffle", Modifier.size(size), tint = if (p.shuffle) Accent else Color.White)
 }
 
 @Composable
-private fun RepeatButton(p: PlayerState) = IconButton(p::cycleRepeat) {
+private fun RepeatButton(p: PlayerState, size: Dp = 24.dp) = IconButton(p::cycleRepeat, Modifier.size(size + 24.dp)) {
     Icon(
-        if (p.repeat == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "Repeat",
+        if (p.repeat == Player.REPEAT_MODE_ONE) Icons.Rounded.RepeatOne else Icons.Rounded.Repeat, "Repeat", Modifier.size(size),
         tint = if (p.repeat == Player.REPEAT_MODE_OFF) Color.White else Accent,
     )
 }
 
 @Composable
-private fun SkipButton(p: PlayerState, next: Boolean, icon: Dp) = IconButton({ if (next) p.c.seekToNext() else p.c.seekToPrevious() }, Modifier.size(56.dp)) {
+private fun SkipButton(p: PlayerState, next: Boolean, icon: Dp) = IconButton({ if (next) p.c.seekToNext() else p.c.seekToPrevious() }, Modifier.size(maxOf(56.dp, icon + 16.dp))) {
     Icon(if (next) Icons.Rounded.SkipNext else Icons.Rounded.SkipPrevious, if (next) "Next" else "Previous", Modifier.size(icon))
 }
 

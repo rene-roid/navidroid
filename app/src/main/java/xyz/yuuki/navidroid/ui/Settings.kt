@@ -100,7 +100,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextField
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import xyz.yuuki.navidroid.HOME_SECTIONS
+import xyz.yuuki.navidroid.homeOrder
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -193,6 +197,12 @@ val fieldColors @Composable get() = OutlinedTextFieldDefaults.colors(
 
 internal val fieldShape = RoundedCornerShape(14.dp)
 
+/**
+ * [fieldColors] for a field with a floating label. Those are filled TextFields: an outlined one lifts the label onto its
+ * top border, which on a filled box with no border to notch looks cut in half.
+ */
+private val labelFieldColors @Composable get() = fieldColors.copy(focusedIndicatorColor = Color.Transparent, disabledIndicatorColor = Color.Transparent)
+
 /** A server address being typed and what answered at it; [result] is null while it is blank or being checked. */
 internal class ServerField {
     var text by mutableStateOf("")
@@ -216,8 +226,8 @@ internal fun ProbeField(
         f.result = withContext(Dispatchers.IO) { probeAddress(f.text) }
     }
     val r = f.result
-    OutlinedTextField(
-        f.text, { f.text = it }, modifier.fillMaxWidth(), shape = fieldShape, colors = fieldColors, enabled = enabled, singleLine = true,
+    TextField(
+        f.text, { f.text = it }, modifier.fillMaxWidth(), shape = fieldShape, colors = labelFieldColors, enabled = enabled, singleLine = true,
         label = { StateText(label) }, leadingIcon = { Icon(Icons.Rounded.Dns, null) },
         trailingIcon = {
             when {
@@ -374,15 +384,15 @@ fun LoginScreen(onCancel: (() -> Unit)? = null, onDone: () -> Unit) {
                     }
                     val focus = remember { FocusRequester() }
                     LaunchedEffect(Unit) { focus.requestFocus() }
-                    OutlinedTextField(
+                    TextField(
                         user, { user = it }, Modifier.fillMaxWidth().focusRequester(focus).semantics { contentType = ContentType.Username },
-                        shape = fieldShape, colors = fieldColors, enabled = !busy, singleLine = true,
+                        shape = fieldShape, colors = labelFieldColors, enabled = !busy, singleLine = true,
                         label = { StateText("Username") }, leadingIcon = { Icon(Icons.Rounded.Person, null) },
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, imeAction = ImeAction.Next),
                     )
-                    OutlinedTextField(
+                    TextField(
                         pass, { pass = it }, Modifier.fillMaxWidth().semantics { contentType = ContentType.Password },
-                        shape = fieldShape, colors = fieldColors, enabled = !busy, singleLine = true,
+                        shape = fieldShape, colors = labelFieldColors, enabled = !busy, singleLine = true,
                         label = { StateText("Password") }, leadingIcon = { Icon(Icons.Rounded.Lock, null) },
                         trailingIcon = {
                             IconButton({ showPass = !showPass }) {
@@ -536,11 +546,35 @@ private val themes = listOf(
     "Amber" to Color(0xFFF59E0B), "Teal" to Color(0xFF14B8A6), "Red" to Color(0xFFEF4444),
 )
 
-private fun themeName() = themes.firstOrNull { it.second == Accent }?.first ?: "Custom"
+private fun themeName() = if (accentFromWallpaper) "Wallpaper" else themes.firstOrNull { it.second == Accent }?.first ?: "Custom"
 
 private fun setAccent(c: Color) {
     Accent = c
     App.it.prefs.accent = c.toArgb()
+    accentFromWallpaper = false
+    App.it.prefs.accentWallpaper = false
+}
+
+private val densities = listOf(0 to "Comfortable", 1 to "Compact")
+private val playerStyles = listOf(0 to "Cover", 1 to "Vinyl", 2 to "Lyrics first")
+private val homeKeys = HOME_SECTIONS.map { it.first }
+private val layoutDefault get() = !compactLists && nowPlayingStyle == 0 && !largeControls && homeHidden.isEmpty() && homeOrder(homeSaved, homeKeys) == homeKeys
+
+private fun setHome(order: List<String> = homeSaved, hidden: Set<String> = homeHidden) {
+    homeSaved = order
+    homeHidden = hidden
+    App.it.prefs.homeOrder = order
+    App.it.prefs.homeHidden = hidden
+}
+
+private fun setLayout(compact: Boolean = compactLists, style: Int = nowPlayingStyle, large: Boolean = largeControls) {
+    compactLists = compact
+    nowPlayingStyle = style
+    largeControls = large
+    val prefs = App.it.prefs
+    prefs.compactLists = compact
+    prefs.nowPlayingStyle = style
+    prefs.largeControls = large
 }
 
 private val rainbow = Brush.sweepGradient(listOf(Color.Red, Color.Yellow, Color.Green, Color.Cyan, Color.Blue, Color.Magenta, Color.Red))
@@ -1212,9 +1246,43 @@ fun AppearanceScreen() {
             Section("Theme", wide, action = { ResetButton(Accent != Blue) { setAccent(Blue) } }) {
                 Text("Buttons, sliders and highlights", Modifier.padding(start = 16.dp, top = 8.dp), style = MaterialTheme.typography.bodySmall)
                 Swatches {
-                    themes.forEach { (name, c) -> Swatch(name, SolidColor(c), Accent == c) { setAccent(c) } }
-                    val custom = themes.none { it.second == Accent }
+                    themes.forEach { (name, c) -> Swatch(name, SolidColor(c), !accentFromWallpaper && Accent == c) { setAccent(c) } }
+                    wallpaperAccent(ctx)?.let { w ->
+                        Swatch("Wallpaper", SolidColor(w), accentFromWallpaper) {
+                            Accent = w
+                            accentFromWallpaper = true
+                            prefs.accentWallpaper = true
+                        }
+                    }
+                    val custom = !accentFromWallpaper && themes.none { it.second == Accent }
                     Swatch("Custom", if (custom) SolidColor(Accent) else rainbow, custom) { editing = Accent to ::setAccent }
+                }
+            }
+        }
+        item {
+            Section("Layout", wide, action = { ResetButton(compactLists || nowPlayingStyle != 0 || largeControls) { setLayout(false, 0, false) } }) {
+                ChoiceRow("List density", if (compactLists) 1 else 0, densities) { setLayout(compact = it == 1) }
+                ChoiceRow("Now Playing style", nowPlayingStyle, playerStyles) { setLayout(style = it) }
+                SwitchRow("Large controls", "Bigger buttons and text in Now Playing, for the car", largeControls) { setLayout(large = it) }
+            }
+        }
+        item {
+            val order = homeOrder(homeSaved, homeKeys)
+            Section("Home", wide, action = { ResetButton(order != homeKeys || homeHidden.isNotEmpty()) { setHome(emptyList(), emptySet()) } }) {
+                Text(
+                    "What Home shows, from the top. A section with nothing in it stays out.",
+                    Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp), style = MaterialTheme.typography.bodySmall,
+                )
+                order.forEachIndexed { i, key ->
+                    val name = HOME_SECTIONS.first { it.first == key }.second
+                    val shown = key !in homeHidden
+                    fun move(to: Int) = setHome(order.toMutableList().apply { add(to, removeAt(i)) })
+                    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(name, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge, color = if (shown) Color.White else Faint)
+                        IconButton({ move(i - 1) }, enabled = i > 0) { Icon(Icons.Rounded.KeyboardArrowUp, "Move $name up") }
+                        IconButton({ move(i + 1) }, enabled = i < order.lastIndex) { Icon(Icons.Rounded.KeyboardArrowDown, "Move $name down") }
+                        Switch(shown, { setHome(hidden = if (it) homeHidden - key else homeHidden + key) }, colors = SwitchDefaults.colors(checkedTrackColor = Accent))
+                    }
                 }
             }
         }
@@ -1268,7 +1336,7 @@ fun AppearanceScreen() {
                 }
             }
         }
-        if (Accent != Blue || icon != 0 || !auroraDefault) item {
+        if (Accent != Blue || icon != 0 || !auroraDefault || !layoutDefault) item {
             Box(wide.padding(8.dp)) {
                 TextButton({ confirmReset = true }) { Text("Reset all to defaults", color = Color(0xFFF15E6C)) }
             }
@@ -1280,10 +1348,12 @@ fun AppearanceScreen() {
         onDismissRequest = { confirmReset = false },
         containerColor = Elevated,
         title = { Text("Reset appearance?") },
-        text = { Text("Back to the blue theme, the Aurora icon and the classic aurora with everything on. Your custom colours are cleared.") },
+        text = { Text("Back to the blue theme, the usual layout and Home, the Aurora icon and the classic aurora with everything on. Your custom colours are cleared.") },
         confirmButton = {
             TextButton({
                 setAccent(Blue)
+                setLayout(false, 0, false)
+                setHome(emptyList(), emptySet())
                 resetIcon()
                 resetAurora()
                 confirmReset = false

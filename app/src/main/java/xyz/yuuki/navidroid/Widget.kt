@@ -14,7 +14,26 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.Image as UiImage
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box as UiBox
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight as uiFillMaxHeight
+import androidx.compose.foundation.layout.height as uiHeight
+import androidx.compose.foundation.layout.size as uiSize
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.text.font.FontWeight as UiFontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.clickable as tap
 import androidx.compose.foundation.layout.Column as UiColumn
 import androidx.compose.foundation.layout.Row as UiRow
@@ -214,17 +233,43 @@ class NowPlayingWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget = NowPlayingWidget()
 }
 
+/** The widget's own colour for the background at [bg] in [backgrounds]. */
+private fun backdrop(bg: Int, np: NowPlaying?) = when (bg) {
+    1 -> Bg
+    2 -> Color(0x99000000)
+    else -> np?.color?.takeIf { it != 0 }?.let { Color(ColorUtils.blendARGB(it, AndroidColor.BLACK, .45f)) } ?: Surface
+}
+
+/** The wide widget redrawn in plain Compose, on a stand-in wallpaper so the translucent background shows as one. */
+@Composable
+private fun Preview(s: Shown?, bg: Int, controls: Boolean) = UiBox(
+    Modifier.uiFillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Brush.linearGradient(listOf(Color(0xFF4B3B8F), Color(0xFF1F7A72)))).uiPadding(20.dp),
+) {
+    UiRow(
+        Modifier.uiFillMaxWidth().uiHeight(64.dp).clip(RoundedCornerShape(20.dp)).background(backdrop(bg, s?.np)).uiPadding(8.dp),
+        verticalAlignment = UiAlignment.CenterVertically,
+    ) {
+        s?.cover?.let { UiImage(it.asImageBitmap(), null, Modifier.uiFillMaxHeight().aspectRatio(1f).clip(RoundedCornerShape(8.dp))) }
+        UiColumn(Modifier.weight(1f).uiPadding(horizontal = 10.dp)) {
+            UiText(s?.np?.title ?: "Song title", fontSize = 15.sp, fontWeight = UiFontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            UiText(s?.np?.artist ?: "Artist", fontSize = 13.sp, color = Sub, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (controls) {
+            Icon(Icons.Rounded.SkipPrevious, null, Modifier.uiSize(32.dp).uiPadding(4.dp))
+            UiBox(Modifier.uiPadding(horizontal = 6.dp).uiSize(32.dp).clip(CircleShape).background(Accent), contentAlignment = UiAlignment.Center) {
+                Icon(Icons.Rounded.PlayArrow, null, Modifier.uiSize(19.dp), tint = OnAccent)
+            }
+            Icon(Icons.Rounded.SkipNext, null, Modifier.uiSize(32.dp).uiPadding(4.dp))
+        }
+    }
+}
+
 @Composable
 private fun Content(s: Shown?, bg: Int, controls: Boolean) {
     val np = s?.np
     val cover = s?.cover?.let { ImageProvider(it) }
-    val color = when (bg) {
-        1 -> Bg
-        2 -> Color(0x99000000)
-        else -> np?.color?.takeIf { it != 0 }?.let { Color(ColorUtils.blendARGB(it, AndroidColor.BLACK, .45f)) } ?: Surface
-    }
     val size = LocalSize.current
-    Box(GlanceModifier.fillMaxSize().shape(color, null).clickable(actionStartActivity<MainActivity>()), contentAlignment = Alignment.Center) {
+    Box(GlanceModifier.fillMaxSize().shape(backdrop(bg, np), null).clickable(actionStartActivity<MainActivity>()), contentAlignment = Alignment.Center) {
         when {
             np == null -> Row(GlanceModifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Image(ImageProvider(R.mipmap.ic_launcher), null, GlanceModifier.size(40.dp))
@@ -325,6 +370,7 @@ class WidgetConfigActivity : ComponentActivity() {
                 var bg by remember { mutableIntStateOf(0) }
                 var controls by remember { mutableStateOf(true) }
                 val scope = rememberCoroutineScope()
+                val playing by produceState(shown.value) { if (value == null) value = withContext(Dispatchers.IO) { load() } }
                 LaunchedEffect(Unit) {
                     val prefs = getAppWidgetState(this@WidgetConfigActivity, PreferencesGlanceStateDefinition, id)
                     bg = prefs[BG] ?: 0
@@ -332,6 +378,8 @@ class WidgetConfigActivity : ComponentActivity() {
                 }
                 UiColumn(Modifier.uiFillMaxSize().background(Bg).safeDrawingPadding().uiPadding(24.dp)) {
                     UiText("Now playing widget", style = MaterialTheme.typography.headlineMedium)
+                    UiSpacer(Modifier.uiHeight(20.dp))
+                    Preview(playing, bg, controls)
                     UiText("Background", Modifier.uiPadding(top = 24.dp, bottom = 4.dp), color = Sub, style = MaterialTheme.typography.titleSmall)
                     backgrounds.forEachIndexed { i, name ->
                         UiRow(Modifier.uiFillMaxWidth().tap { bg = i }, verticalAlignment = UiAlignment.CenterVertically) {

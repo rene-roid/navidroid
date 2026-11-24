@@ -1,6 +1,14 @@
 package xyz.yuuki.navidroid.ui
 
+import android.content.Context
+import android.os.Build
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -30,7 +38,22 @@ val Green = Color(0xFF1DB954)
 val Purple = Color(0xFF8B5CF6)
 
 /** Colour of buttons and highlights, picked in Settings; global so a change applies everywhere at once. */
-var Accent by mutableStateOf(Color(App.it.prefs.accent))
+var Accent by mutableStateOf(App.it.prefs.run { (if (accentWallpaper) wallpaperAccent(App.it) else null) ?: Color(accent) })
+
+/** The wallpaper's colour (Material You), on the Androids that have one. */
+fun wallpaperAccent(ctx: Context) = if (Build.VERSION.SDK_INT >= 31) dynamicDarkColorScheme(ctx).primary else null
+
+// What Settings > Appearance chooses besides colours; global like Accent, and saved by whoever changes them.
+var accentFromWallpaper by mutableStateOf(App.it.prefs.accentWallpaper)
+var homeSaved by mutableStateOf(App.it.prefs.homeOrder)
+var homeHidden by mutableStateOf(App.it.prefs.homeHidden)
+var compactLists by mutableStateOf(App.it.prefs.compactLists)
+/** 0 the cover, 1 the cover on a turning record, 2 lyrics first. */
+var nowPlayingStyle by mutableIntStateOf(App.it.prefs.nowPlayingStyle)
+var largeControls by mutableStateOf(App.it.prefs.largeControls)
+
+/** Whether lists are drawn tight: smaller covers, less air between rows. */
+val LocalCompact = compositionLocalOf { false }
 val OnAccent get() = if (Accent.luminance() > .18f) Color.Black else Color.White
 val Sub = Color(0xFFB3B3B3)
 val Faint = Color(0xFF7A7A7A)
@@ -77,7 +100,10 @@ fun NavidroidTheme(content: @Composable () -> Unit) = MaterialTheme(
     ),
     typography = typography,
 ) {
-    CompositionLocalProvider(LocalContentColor provides Color.White, content = content)
+    val ctx = LocalContext.current
+    // A new wallpaper recreates the activity, which comes back through here.
+    if (accentFromWallpaper) LaunchedEffect(LocalConfiguration.current) { wallpaperAccent(ctx)?.let { Accent = it } }
+    CompositionLocalProvider(LocalContentColor provides Color.White, LocalCompact provides compactLists, content = content)
 }
 
 fun formatTime(ms: Long): String {
