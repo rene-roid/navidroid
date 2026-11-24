@@ -750,7 +750,7 @@ fun AddToPlaylist(songs: List<Song>, onDone: () -> Unit) {
                         Text("New playlist")
                     }
                 }
-                items(lists.data.orEmpty().filter { it.mix == null && it.owner == user && it.id !in Hidden.playlists }, key = Playlist::id) { p ->
+                items(lists.data.orEmpty().filter { it.mix == null && !it.smart && it.owner == user && it.id !in Hidden.playlists }, key = Playlist::id) { p ->
                     Row(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).clickable {
                             scope.launch {
