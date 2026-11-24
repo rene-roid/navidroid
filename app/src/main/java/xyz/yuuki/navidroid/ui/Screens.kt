@@ -905,7 +905,7 @@ fun LibraryScreen(column: Boolean = false) {
             }
             if (sections != null) {
                 sections.forEach { (title, pick) ->
-                    val g = shown.filter(pick).let { if (sort == LibSort.Default) it.sortedWith(compareBy({ !saved(it) }, { xyz.yuuki.navidroid.mixOrder(it.mix!!, hour) })) else it }
+                    val g = shown.filter(pick).let { if (sort == LibSort.Default) it.sortedWith(compareBy({ !saved(it) }, { it.mix?.let { m -> xyz.yuuki.navidroid.mixOrder(m, hour) } ?: Int.MAX_VALUE })) else it }
                     if (g.isNotEmpty()) header("section:$title", title)
                     group(g)
                 }
