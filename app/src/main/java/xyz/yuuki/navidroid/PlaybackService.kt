@@ -52,7 +52,6 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import xyz.yuuki.navidroid.ui.coverRequest
-import java.io.File
 import java.io.IOException
 
 /** [auto]: the song this one was picked to follow, when the app queued it (radio, autoplay) and not the user. */
@@ -87,7 +86,7 @@ val MediaItem.auto: String? get() = mediaMetadata.extras?.getString("auto")
 class PlaybackService : MediaSessionService() {
     private var session: MediaSession? = null
     private val scope = MainScope()
-    private val queueFile by lazy { File(filesDir, "queue.json") }
+    private val queueFile by lazy { App.it.dir("queue.json") }
     private val buttons = Handler(Looper.getMainLooper())
     private var presses = 0
     private var restoring: Job? = null

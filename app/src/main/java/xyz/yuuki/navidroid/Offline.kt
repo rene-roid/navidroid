@@ -3,6 +3,9 @@ package xyz.yuuki.navidroid
 import android.app.Notification
 import android.net.Uri
 import android.system.Os
+import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteOpenHelper
+import androidx.media3.database.DatabaseProvider
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.okhttp.OkHttpDataSource
@@ -60,14 +63,19 @@ data class Pin(val kind: Kind, val id: String) {
  * which keeps the rotating NaviBeat/Explo mixes current.
  */
 class Offline(private val app: App) {
-    private val db = StandaloneDatabaseProvider(app)
-    val cache = SimpleCache(File(app.filesDir, "media"), NoOpCacheEvictor(), db)
+    // Media3's database has one list of downloads for the whole app, so every account but the first gets a database of its own.
+    private val db: DatabaseProvider = if (app.account == DEFAULT_ACCOUNT) StandaloneDatabaseProvider(app) else
+        object : SQLiteOpenHelper(app, accountDb(app.account), null, 1), DatabaseProvider {
+            override fun onCreate(db: SQLiteDatabase) {}
+            override fun onUpgrade(db: SQLiteDatabase, old: Int, new: Int) {}
+        }
+    val cache = SimpleCache(app.dir("media"), NoOpCacheEvictor(), db)
     /** Songs heard or preloaded while streaming; the oldest go first. */
-    private val streamCache = SimpleCache(File(app.cacheDir, "stream"), LeastRecentlyUsedCacheEvictor(1L shl 30), db)
+    private val streamCache = SimpleCache(app.cacheDir("stream"), LeastRecentlyUsedCacheEvictor(1L shl 30), db)
     /** A link per cover id, into [coverBlobs], which holds each distinct picture once by its SHA-256. */
-    private val covers = File(app.filesDir, "covers").apply { mkdirs() }
+    private val covers = app.dir("covers").apply { mkdirs() }
     private val coverBlobs = File(covers, "blobs").apply { mkdirs() }
-    private val snapshots = File(app.filesDir, "collections").apply { mkdirs() }
+    private val snapshots = app.dir("collections").apply { mkdirs() }
 
     private val upstream = ResolvingDataSource.Factory(
         // The API's client: songs reuse its warm connections instead of a fresh TCP and TLS handshake each.

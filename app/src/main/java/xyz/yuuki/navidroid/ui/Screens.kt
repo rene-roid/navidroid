@@ -198,7 +198,6 @@ import xyz.yuuki.navidroid.listeningTiles
 import xyz.yuuki.navidroid.list
 import xyz.yuuki.navidroid.tile
 import xyz.yuuki.navidroid.withOthers
-import java.io.File
 import java.util.Calendar
 
 private val api get() = App.it.api
@@ -207,7 +206,7 @@ private val offline get() = App.it.offline
 fun displayName() = App.it.prefs.username.orEmpty().replaceFirstChar { it.uppercase() }
 
 /** Profile picture, kept on-device since Subsonic has no avatar upload. Bump [avatarVersion] after writing it. */
-val avatarFile get() = File(App.it.filesDir, "avatar")
+val avatarFile get() = App.it.dir("avatar")
 var avatarVersion by mutableIntStateOf(0)
 
 @Composable

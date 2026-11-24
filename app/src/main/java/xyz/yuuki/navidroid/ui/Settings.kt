@@ -167,6 +167,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import androidx.compose.material.icons.rounded.SwapHoriz
+import java.util.UUID
+import xyz.yuuki.navidroid.Account
+import xyz.yuuki.navidroid.DEFAULT_ACCOUNT
+import xyz.yuuki.navidroid.Prefs
+import xyz.yuuki.navidroid.accountLabel
 import xyz.yuuki.navidroid.ApiException
 import xyz.yuuki.navidroid.Probe
 import xyz.yuuki.navidroid.networkReason
@@ -244,9 +250,12 @@ private fun ErrorBox(lines: List<String>) = Row(
     Column { lines.forEach { Text(it, style = MaterialTheme.typography.bodyMedium) } }
 }
 
-/** Two steps on one card: find the server, then sign in to it. */
+/**
+ * Two steps on one card: find the server, then sign in to it. With [onCancel] it adds an account beside the ones
+ * already here and restarts into it, so [onDone] is never reached.
+ */
 @Composable
-fun LoginScreen(onDone: () -> Unit) {
+fun LoginScreen(onCancel: (() -> Unit)? = null, onDone: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val servers = remember { mutableStateListOf(ServerField()) }
@@ -277,18 +286,34 @@ fun LoginScreen(onDone: () -> Unit) {
                 busy = false
                 return@launch
             }
-            val prefs = App.it.prefs
+            val app = App.it
+            val adding = onCancel != null
+            val label = accountLabel(name, ok[0].first)
+            if (adding && app.accounts.list.any { it.label == label }) {
+                errors = listOf("That account is already on this phone. Pick it under Switch account.")
+                busy = false
+                return@launch
+            }
+            val id = if (adding) app.accounts.newId(UUID.randomUUID().toString().take(8)) else app.account
+            val prefs = if (adding) Prefs(app, id) else app.prefs
             prefs.endpoints = ok.map { it.first }
             prefs.username = name
             prefs.token = ok[0].second.first
             prefs.salt = ok[0].second.second
             prefs.active = ok[0].first
-            App.it.api = Api(prefs, App.it.scope).apply { clearSaved() }
-            App.it.scope.launch { App.it.api.pickFastest() }
+            val accounts = app.accounts.with(Account(id, label))
+            if (adding) {
+                prefs.flush()
+                return@launch app.restartAs(accounts.copy(active = id))
+            }
+            app.accounts = accounts
+            app.api = Api(prefs, app.scope).apply { clearSaved() }
+            app.scope.launch { app.api.pickFastest() }
             onDone()
         }
     }
 
+    BackHandler(onCancel != null && !busy) { onCancel?.invoke() }
     BackHandler(account && !busy) { account = false }
     Box(Modifier.fillMaxSize().background(Bg)) {
         Aurora(null, null, modifier = Modifier.fillMaxSize())
@@ -299,7 +324,7 @@ fun LoginScreen(onDone: () -> Unit) {
             LauncherIcon(icons[remember { currentIcon(ctx) }].res, 88.dp)
             Text("Navidroid", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.padding(top = 12.dp))
             Text(
-                "Your whole library, streamed from your own server.",
+                if (onCancel != null) "Add another account. The ones already here stay on this phone." else "Your whole library, streamed from your own server.",
                 style = MaterialTheme.typography.bodyMedium, color = Sub, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 4.dp, bottom = 20.dp),
             )
             Column(
@@ -375,6 +400,7 @@ fun LoginScreen(onDone: () -> Unit) {
                     }
                 }
             }
+            if (onCancel != null) TextButton(onCancel, Modifier.padding(top = 8.dp), enabled = !busy) { Text("Cancel", color = Color.White) }
         }
     }
 }
@@ -654,7 +680,8 @@ private fun rememberConnection(): Connection {
 
 /** Who is logged in and where, and how the connection is doing. */
 @Composable
-private fun AccountCard(onLogout: () -> Unit) {
+private fun AccountCard(onLogout: () -> Unit, onAddAccount: () -> Unit) {
+    var switching by remember { mutableStateOf(false) }
     val nav = LocalNav.current
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -707,22 +734,65 @@ private fun AccountCard(onLogout: () -> Unit) {
                 Text("Log out", color = Color.White)
             }
         }
+        OutlinedButton({ switching = true }, Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            Icon(Icons.Rounded.SwapHoriz, null, Modifier.size(18.dp), tint = Color.White)
+            Spacer(Modifier.width(6.dp))
+            Text("Switch account", color = Color.White)
+        }
+    }
+    if (switching) AccountsSheet({ switching = false }) {
+        switching = false
+        onAddAccount()
     }
     if (confirm) androidx.compose.material3.AlertDialog(
         onDismissRequest = { confirm = false },
         containerColor = Elevated,
         title = { Text("Log out?") },
-        text = { Text("You'll need the server's address and your password to come back. Downloads stay on this phone.") },
+        text = {
+            Text(
+                "You'll need the server's address and your password to come back. " +
+                    if (App.it.account == DEFAULT_ACCOUNT) "Downloads stay on this phone." else "This account's downloads are removed from this phone.",
+            )
+        },
         confirmButton = { TextButton({ confirm = false; onLogout() }) { Text("Log out", color = Red) } },
         dismissButton = { TextButton({ confirm = false }) { Text("Cancel", color = Color.White) } },
     )
 }
 
+/** Every account on this phone, the one in use ticked; picking another restarts into it. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onLogout: () -> Unit) {
+private fun AccountsSheet(onDismiss: () -> Unit, onAdd: () -> Unit) {
+    val app = App.it
+    val accounts = remember { app.accounts }
+    @Composable
+    fun row(title: String, onClick: () -> Unit, badge: @Composable () -> Unit, trailing: @Composable () -> Unit = {}) = Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 24.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        badge()
+        Text(title, Modifier.weight(1f).padding(horizontal = 16.dp), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        trailing()
+    }
+    ModalBottomSheet(onDismiss, containerColor = Elevated) {
+        Column(Modifier.padding(bottom = 24.dp)) {
+            Text("Switch account", Modifier.padding(start = 24.dp, end = 24.dp, bottom = 8.dp), style = MaterialTheme.typography.titleLarge)
+            accounts.list.forEach { a ->
+                val active = a.id == app.account
+                row(
+                    a.label, { if (active) onDismiss() else app.restartAs(accounts.copy(active = a.id)) },
+                    { Box(Modifier.size(40.dp).clip(CircleShape).background(Color(0xFFE1118C)), contentAlignment = Alignment.Center) { Text(a.label.take(1).uppercase(), fontWeight = FontWeight.W800) } },
+                ) { if (active) Icon(Icons.Rounded.Check, "In use", tint = Accent) }
+            }
+            row("Add account", onAdd, { Box(Modifier.size(40.dp).clip(CircleShape).background(Tile), contentAlignment = Alignment.Center) { Icon(Icons.Rounded.Add, null, tint = Color.White) } })
+        }
+    }
+}
+
+@Composable
+fun SettingsScreen(onLogout: () -> Unit, onAddAccount: () -> Unit) {
     val nav = LocalNav.current
     SettingsPage("Settings") {
-        item { AccountCard(onLogout) }
+        item { AccountCard(onLogout, onAddAccount) }
         items(categories) { group ->
             Section { group.forEach { c -> NavRow(c.title, c.summary(), c.icon, c.tint) { nav.go(c.route) } } }
         }
