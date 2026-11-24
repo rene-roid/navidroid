@@ -214,6 +214,17 @@ fun buildHome(
     return Home(greeting, quick, sections)
 }
 
+/** Every part of Home that can be moved or hidden, as key to its name in Settings, in the order the app ships. */
+val HOME_SECTIONS = listOf(
+    "quick" to "Quick picks", "listening" to "Listening now", "made-for-you" to "Made for you", "recently-played" to "Recently played",
+    "top-mixes" to "Your top mixes", "time-of-day" to "Mixes for your day", "your-playlists" to "Your playlists", "favorites" to "Favorites",
+    "top-artists" to "Top artists", "recently-added" to "Recently added", "because" to "Because you listened",
+    "unplayed" to "Albums you haven't played yet", "throwback" to "Released 10, 20 or 30 years ago", "jump-back" to "Jump back in",
+)
+
+/** Home's sections in the order to show them: the [saved] ones that still exist, then those the app gained since, in its own order. */
+fun homeOrder(saved: List<String>, available: List<String>) = saved.filter { it in available }.distinct() + available.filter { it !in saved }
+
 // ---- discovery shelves ------------------------------------------------------------------------
 
 /** Albums by artists like the one just heard, one artist after another round-robin, none already in [recent]. */

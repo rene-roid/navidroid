@@ -77,6 +77,15 @@ class MixesTest {
     }
 
     @Test
+    fun homeKeepsTheSavedOrderAndGainsNewSections() {
+        val shipped = listOf("quick", "listening", "made-for-you", "recently-played")
+        assertEquals(shipped, homeOrder(emptyList(), shipped))
+        assertEquals(listOf("recently-played", "quick", "listening", "made-for-you"), homeOrder(listOf("recently-played", "quick"), shipped))
+        assertEquals(listOf("listening", "quick", "made-for-you", "recently-played"), homeOrder(listOf("listening", "gone", "quick", "listening"), shipped))
+        assertEquals(14, homeOrder(listOf("jump-back"), HOME_SECTIONS.map { it.first }).toSet().size)
+    }
+
+    @Test
     fun endpointsAreNormalized() {
         assertEquals("https://music.thekenji.xyz", normalizeEndpoint("music.thekenji.xyz/app/#/"))
         assertEquals("http://192.168.68.63:4533", normalizeEndpoint("http://192.168.68.63:4533/app/#/"))
