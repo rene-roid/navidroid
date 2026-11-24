@@ -1,6 +1,7 @@
 package xyz.yuuki.navidroid
 
 import android.content.Context
+import android.content.SharedPreferences
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -302,8 +303,13 @@ fun shuffledRadio(songs: List<Song>, fresh: Boolean, rnd: Random = Random): List
 
 // ---- settings -------------------------------------------------------------------------------
 
-class Prefs(ctx: Context, account: String) {
-    private val p = ctx.getSharedPreferences(prefsName(account), Context.MODE_PRIVATE)
+class Prefs(account: String, open: (String) -> SharedPreferences) {
+    constructor(ctx: Context, account: String) : this(account, { ctx.getSharedPreferences(it, Context.MODE_PRIVATE) })
+
+    /** What belongs to the account: who it is, and what it keeps of its server. */
+    private val p = open(prefsName(account))
+    /** How the app looks and plays on this phone, whichever account is in use; a property says so by naming this store. */
+    private val device = open(prefsName(DEFAULT_ACCOUNT))
 
     var endpoints: List<String>
         get() = p.getString("endpoints", null)?.let { JSONArray(it) }?.let { a -> List(a.length()) { a.getString(it) } } ?: emptyList()
@@ -312,18 +318,18 @@ class Prefs(ctx: Context, account: String) {
     var username by str("username")
     var token by str("token")
     var salt by str("salt")
-    var streamBitrateWifi by int("streamWifi", 0)
-    var streamBitrateMobile by int("streamMobile", 192)
-    var downloadBitrate by int("downloadBitrate", 160)
-    var wifiOnlyDownloads by bool("wifiOnly", true)
-    var auroraColors by int("auroraColors", 0)
-    var auroraPalette by int("auroraPalette", 0)
+    var streamBitrateWifi by int("streamWifi", 0, device)
+    var streamBitrateMobile by int("streamMobile", 192, device)
+    var downloadBitrate by int("downloadBitrate", 160, device)
+    var wifiOnlyDownloads by bool("wifiOnly", true, device)
+    var auroraColors by int("auroraColors", 0, device)
+    var auroraPalette by int("auroraPalette", 0, device)
     /** The custom aurora palette, four ARGB colours joined by commas. */
-    var auroraCustom by str("auroraCustom")
-    var auroraBrightness by int("auroraBrightness", 100)
-    var accent by int("accent", 0xFF0085FF.toInt())
+    var auroraCustom by str("auroraCustom", device)
+    var auroraBrightness by int("auroraBrightness", 100, device)
+    var accent by int("accent", 0xFF0085FF.toInt(), device)
     var lastSync by long("lastSync")
-    var autoplay by bool("autoplay", true)
+    var autoplay by bool("autoplay", true, device)
 
     /** What was opened or played from search, newest first. */
     var recentSearches: List<Recent>
@@ -339,9 +345,9 @@ class Prefs(ctx: Context, account: String) {
         get() = p.getStringSet("hiddenPlaylists", null) ?: emptySet()
         set(v) = p.edit().putStringSet("hiddenPlaylists", v).apply()
 
-    var librarySort by int("librarySort", 0)
-    var libraryGrid by bool("libraryGrid", false)
-    var libraryMixes by bool("libraryMixes", true)
+    var librarySort by int("librarySort", 0, device)
+    var libraryGrid by bool("libraryGrid", false, device)
+    var libraryMixes by bool("libraryMixes", true, device)
 
     /** Artist mixes and radios saved to the library; they're made on the phone, so they live here too. */
     var savedMixes: List<Tile>
@@ -366,21 +372,22 @@ class Prefs(ctx: Context, account: String) {
 
     val loggedIn get() = token != null && endpoints.isNotEmpty()
 
-    fun flag(k: String) = p.getBoolean(k, true)
+    /** The aurora's switches, so the phone's like the rest of its look. */
+    fun flag(k: String) = device.getBoolean(k, true)
 
-    fun flag(k: String, v: Boolean) = p.edit().putBoolean(k, v).apply()
+    fun flag(k: String, v: Boolean) = device.edit().putBoolean(k, v).apply()
 
     fun clear() = p.edit().clear().apply()
 
     /** Waits for everything set so far to be on disk, for when the process is about to end. */
-    fun flush() = p.edit().commit()
+    fun flush() = p.edit().commit() && device.edit().commit()
 
-    private fun str(k: String) = object : kotlin.properties.ReadWriteProperty<Any, String?> {
+    private fun str(k: String, p: SharedPreferences = this.p) = object : kotlin.properties.ReadWriteProperty<Any, String?> {
         override fun getValue(thisRef: Any, property: kotlin.reflect.KProperty<*>) = p.getString(k, null)
         override fun setValue(thisRef: Any, property: kotlin.reflect.KProperty<*>, value: String?) = p.edit().putString(k, value).apply()
     }
 
-    private fun int(k: String, d: Int) = object : kotlin.properties.ReadWriteProperty<Any, Int> {
+    private fun int(k: String, d: Int, p: SharedPreferences = this.p) = object : kotlin.properties.ReadWriteProperty<Any, Int> {
         override fun getValue(thisRef: Any, property: kotlin.reflect.KProperty<*>) = p.getInt(k, d)
         override fun setValue(thisRef: Any, property: kotlin.reflect.KProperty<*>, value: Int) = p.edit().putInt(k, value).apply()
     }
@@ -390,7 +397,7 @@ class Prefs(ctx: Context, account: String) {
         override fun setValue(thisRef: Any, property: kotlin.reflect.KProperty<*>, value: Long) = p.edit().putLong(k, value).apply()
     }
 
-    private fun bool(k: String, d: Boolean) = object : kotlin.properties.ReadWriteProperty<Any, Boolean> {
+    private fun bool(k: String, d: Boolean, p: SharedPreferences = this.p) = object : kotlin.properties.ReadWriteProperty<Any, Boolean> {
         override fun getValue(thisRef: Any, property: kotlin.reflect.KProperty<*>) = p.getBoolean(k, d)
         override fun setValue(thisRef: Any, property: kotlin.reflect.KProperty<*>, value: Boolean) = p.edit().putBoolean(k, value).apply()
     }
